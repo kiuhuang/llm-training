@@ -1,0 +1,782 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LLM LoRA Training — Interactive Tutorial</title>
+<style>
+  :root{
+    --bg:#0e1117; --panel:#161b26; --panel2:#1c2230; --line:#2a3242;
+    --text:#dbe2f0; --dim:#8b96ab; --accent:#5eead4; --accent2:#818cf8;
+    --warn:#fbbf24; --bad:#f87171; --good:#4ade80; --mask:#3d4657; --train:#5eead4;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.65 -apple-system,"Segoe UI",Roboto,"Noto Sans","Noto Sans TC","Noto Sans JP","Microsoft JhengHei","Microsoft YaHei",Helvetica,Arial,sans-serif}
+  a{color:var(--accent)}
+  code,kbd{background:#0a0d13;border:1px solid var(--line);border-radius:5px;
+           padding:1px 6px;font:13px/1.5 ui-monospace,Menlo,Consolas,monospace;color:#a5f3d0}
+  pre{background:#0a0d13;border:1px solid var(--line);border-radius:10px;padding:14px 16px;
+      overflow-x:auto;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;color:#a5f3d0;position:relative}
+  h1{font-size:30px;line-height:1.3;margin:0 0 6px}
+  h2{font-size:23px;margin:0 0 10px;color:#fff}
+  h3{font-size:17px;margin:18px 0 6px;color:#c7d2fe}
+  .layout{display:flex;max-width:1180px;margin:0 auto}
+  nav{width:240px;flex:0 0 240px;position:sticky;top:0;height:100vh;padding:20px 14px;
+      border-right:1px solid var(--line);overflow-y:auto}
+  nav a{display:block;padding:6px 10px;border-radius:8px;color:var(--dim);
+        text-decoration:none;font-size:13.5px;margin-bottom:2px}
+  nav a:hover{background:var(--panel2);color:var(--text)}
+  nav a.done{color:var(--accent)}
+  nav .pbar{height:6px;background:var(--panel2);border-radius:4px;margin:10px 6px 14px}
+  nav .pbar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));
+              border-radius:4px;transition:width .5s}
+  #langbox{margin:8px 6px 14px}
+  #langbox button{display:block;width:100%;text-align:left;margin:0 0 5px;padding:6px 10px;font-size:13.5px}
+  #langbox button.on{background:#12312b;border-color:var(--accent);color:var(--accent)}
+  main{flex:1;padding:34px 38px 90px;min-width:0}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:16px;
+          padding:26px 28px;margin-bottom:26px;opacity:.25;transform:translateY(14px);
+          transition:opacity .6s,transform .6s}
+  section.visible{opacity:1;transform:none}
+  .badge{display:inline-block;background:#12312b;color:var(--accent);border:1px solid #1d4d43;
+         border-radius:999px;padding:2px 12px;font-size:12.5px;margin:0 6px 10px 0}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:12px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid2>*{min-width:0}          /* stop long <pre> lines from blowing out the grid */
+  .grid2 pre{max-width:100%}
+  .grid2.flash{grid-template-columns:1fr 1.2fr}   /* flashcard editor: JSON side wider */
+  @media(max-width:860px){.grid2,.grid2.flash{grid-template-columns:1fr}
+    nav{position:static;width:auto;height:auto;border-right:none;border-bottom:1px solid var(--line)}
+    .layout{flex-direction:column}}
+  button{background:var(--panel2);color:var(--text);border:1px solid var(--line);
+         border-radius:9px;padding:8px 16px;font-size:14px;cursor:pointer;margin:4px 6px 4px 0}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:#12312b;border-color:#1d4d43;color:var(--accent)}
+  button.on{background:#12312b;border-color:var(--accent);color:var(--accent)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  input[type=text]{background:#0a0d13;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:14px}
+  textarea{background:#0a0d13;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:14px}
+  .muted{color:var(--dim);font-size:13.5px}
+  .big{font-size:18px}
+  .tok{display:inline-block;border-radius:6px;padding:2px 7px;margin:3px 2px;
+       font:12.5px ui-monospace,Menlo,monospace;border:1px solid transparent;cursor:default}
+  .tok.prompt{background:var(--mask);color:#9aa5b8}
+  .tok.ans{background:#12312b;color:var(--train);border-color:#1d4d43}
+  .tok.stop{background:#3b2f12;color:var(--warn);border-color:#665318}
+  .tok small{opacity:.75;font-size:10px}
+  .bar{height:20px;background:#0a0d13;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;width:0;transition:width 1.1s cubic-bezier(.2,.7,.3,1)}
+  .row{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .row .lbl{width:170px;font-size:13.5px;color:var(--dim);flex:0 0 170px}
+  .row .val{width:80px;text-align:right;font:13px ui-monospace,monospace}
+  .lamp{display:inline-block;width:13px;height:13px;border-radius:50%;background:#333;
+        margin-right:7px;vertical-align:-2px}
+  .lamp.red{background:var(--bad);box-shadow:0 0 9px var(--bad)}
+  .lamp.green{background:var(--good);box-shadow:0 0 9px var(--good)}
+  .quiz{border-left:3px solid var(--accent2);padding:10px 16px;margin:16px 0;background:var(--panel2);border-radius:0 10px 10px 0}
+  .quiz button{margin:4px 8px 4px 0}
+  .quiz .fb{margin-top:8px;font-size:14px;min-height:20px}
+  .frozen{display:inline-block;width:13px;height:13px;background:var(--mask);border-radius:3px;margin-right:4px;vertical-align:-2px}
+  .trained{display:inline-block;width:13px;height:13px;background:var(--train);border-radius:3px;margin-right:4px;vertical-align:-2px}
+  canvas{width:100%;background:#0a0d13;border:1px solid var(--line);border-radius:10px}
+  .h2flex{display:flex;align-items:center;gap:10px}
+  details{margin:10px 0;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px 16px}
+  summary{cursor:pointer;color:#c7d2fe}
+  .caret{display:inline-block;width:8px;height:16px;background:var(--accent);
+         vertical-align:-2px;animation:blink 1s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav id="nav">
+  <div style="font-weight:700;margin:0 6px 2px" data-i18n="nav.title"></div>
+  <div class="muted" style="margin:0 6px 10px" data-i18n="nav.sub"></div>
+  <div id="langbox">
+    <button data-lang="en">English</button>
+    <button data-lang="zhHK">廣東話（香港）</button>
+    <button data-lang="zhHant">繁體中文</button>
+    <button data-lang="zhHans">简体中文</button>
+    <button data-lang="ja">日本語</button>
+  </div>
+  <div class="pbar"><i id="navbar"></i></div>
+  <a href="#s1" data-i18n="nav.c1"></a>
+  <a href="#s2" data-i18n="nav.c2"></a>
+  <a href="#s3" data-i18n="nav.c3"></a>
+  <a href="#s4" data-i18n="nav.c4"></a>
+  <a href="#s5" data-i18n="nav.c5"></a>
+  <a href="#s6" data-i18n="nav.c6"></a>
+  <a href="#s7" data-i18n="nav.c7"></a>
+  <hr style="border-color:var(--line);margin:14px 0">
+  <div class="muted" style="padding:0 10px;font-size:12.5px" data-i18n-html="nav.companion"></div>
+</nav>
+<main>
+
+<header style="margin-bottom:26px">
+  <span class="badge" data-i18n="head.b1"></span><span class="badge" data-i18n="head.b2"></span>
+  <span class="badge" data-i18n="head.b3"></span><span class="badge" data-i18n="head.b4"></span>
+  <h1 data-i18n="head.title"></h1>
+  <p class="big" style="color:var(--dim);max-width:820px" data-i18n-html="head.sub"></p>
+  <a href="#s1" style="text-decoration:none"><button class="primary" data-i18n="head.start"></button></a>
+</header>
+
+<!-- ================= 1 ================= -->
+<section id="s1">
+  <div class="h2flex"><span class="stepnum">1</span><h2 data-i18n="s1.h"></h2></div>
+  <p data-i18n-html="s1.p1"></p>
+  <p data-i18n-html="s1.p2"></p>
+
+  <div class="card">
+    <h3 data-i18n="s1.cardH"></h3>
+    <p><b data-i18n="s1.promptLbl"></b> <i>"The Chinese government is implementing measures to stabilize the
+    economy. Give examples and explain how they contribute."</i></p>
+    <button id="b1base" data-i18n="s1.btnBase"></button>
+    <button id="b1tuned" data-i18n="s1.btnTuned"></button>
+    <pre id="s1out" style="min-height:150px;white-space:pre-wrap"></pre>
+    <p class="muted" data-i18n-html="s1.note"></p>
+  </div>
+
+  <div class="quiz" id="q1">
+    <b data-i18n="q1.q"></b>
+    <div>
+      <button data-q="q1" data-ok="0" data-i18n="q1.a1"></button>
+      <button data-q="q1" data-ok="1" data-i18n="q1.a2"></button>
+      <button data-q="q1" data-ok="0" data-i18n="q1.a3"></button>
+    </div>
+    <div class="fb"></div>
+  </div>
+</section>
+
+<!-- ================= 2 ================= -->
+<section id="s2">
+  <div class="h2flex"><span class="stepnum">2</span><h2 data-i18n="s2.h"></h2></div>
+  <p data-i18n-html="s2.p1"></p>
+  <p data-i18n-html="s2.p2"></p>
+
+  <div class="card">
+    <h3 data-i18n="s2.cardH"></h3>
+    <div class="grid2 flash">
+      <div>
+        <div class="muted" data-i18n="s2.sys"></div>
+        <input type="text" id="f_sys" style="width:100%" value="You are a precise finance tutor.">
+        <div class="muted" style="margin-top:8px" data-i18n="s2.usr"></div>
+        <textarea id="f_usr" style="width:100%;height:54px">What is compound interest?</textarea>
+        <div class="muted" style="margin-top:8px" data-i18n="s2.asst"></div>
+        <textarea id="f_asst" style="width:100%;height:54px">Interest earned on both the principal and previously accumulated interest.</textarea>
+        <div class="muted" style="margin-top:8px" data-i18n-html="s2.hint2"></div>
+      </div>
+      <div>
+        <div class="muted" data-i18n-html="s2.outLbl"></div>
+        <pre id="f_out" style="min-height:170px"></pre>
+        <div id="f_msg" class="muted"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="s2.cmdsH"></h3>
+<pre><span class="cmd">make data        <span class="cm"># stream → clean → sample 30k → split train/val/test → eval prompts</span>
+make data-full   <span class="cm"># the whole ~518k dataset (1.8 GB download, true shuffle)</span>
+make inspect     <span class="cm"># length stats — you NEED these to pick sequence length</span></span></pre>
+    <p class="muted" data-i18n-html="s2.rule"></p>
+  </div>
+
+  <div class="quiz" id="q2">
+    <b data-i18n="q2.q"></b>
+    <div>
+      <button data-q="q2" data-ok="0" data-i18n="q2.a1"></button>
+      <button data-q="q2" data-ok="1" data-i18n="q2.a2"></button>
+      <button data-q="q2" data-ok="0" data-i18n="q2.a3"></button>
+    </div>
+    <div class="fb"></div>
+  </div>
+</section>
+
+<!-- ================= 3 ================= -->
+<section id="s3">
+  <div class="h2flex"><span class="stepnum">3</span><h2 data-i18n="s3.h"></h2></div>
+  <p data-i18n-html="s3.p1"></p>
+
+  <div class="card">
+    <h3 data-i18n="s3.cardH"></h3>
+    <button id="s3mask" class="on" data-i18n="s3.btnMask"></button>
+    <button id="s3nomask" data-i18n="s3.btnNomask"></button>
+    <div id="s3toks" style="margin:14px 0;line-height:2.3"></div>
+    <div class="row"><span class="lbl" data-i18n="s3.trainedLbl"></span><div class="bar" style="flex:1"><i id="s3bar" style="background:linear-gradient(90deg,#818cf8,var(--train))"></i></div><span class="val" id="s3cnt"></span></div>
+    <div id="s3verdict" class="big" style="margin-top:10px"></div>
+    <p class="muted" style="margin-top:10px" data-i18n-html="s3.hover"></p>
+  </div>
+
+  <details><summary data-i18n="s3.detH"></summary>
+    <p data-i18n-html="s3.detP"></p>
+  </details>
+
+  <div class="quiz" id="q3">
+    <b data-i18n="q3.q"></b>
+    <div>
+      <button data-q="q3" data-ok="0" data-i18n="q3.a1"></button>
+      <button data-q="q3" data-ok="1" data-i18n="q3.a2"></button>
+      <button data-q="q3" data-ok="0" data-i18n="q3.a3"></button>
+    </div>
+    <div class="fb"></div>
+  </div>
+</section>
+
+<!-- ================= 4 ================= -->
+<section id="s4">
+  <div class="h2flex"><span class="stepnum">4</span><h2 data-i18n="s4.h"></h2></div>
+  <p data-i18n-html="s4.p1"></p>
+
+  <div class="card">
+    <h3 data-i18n="s4.cardH"></h3>
+    <div class="row"><span class="lbl" data-i18n="s4.rank"></span>
+      <input type="range" id="lora_r" min="1" max="64" step="1" value="16" style="flex:1">
+      <span class="val" id="lora_rv">16</span></div>
+    <div id="lora_grid" style="margin:12px 0"></div>
+    <div class="row"><span class="lbl" data-i18n="s4.trainLbl"></span><div class="bar" style="flex:1"><i id="lora_bar" style="background:linear-gradient(90deg,var(--accent2),var(--accent))"></i></div><span class="val" id="lora_pct"></span></div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="card" style="margin:0"><span class="muted" data-i18n="s4.capLbl"></span><div class="big" id="lora_cap"></div></div>
+      <div class="card" style="margin:0"><span class="muted" data-i18n="s4.costLbl"></span><div class="big" id="lora_cost"></div></div>
+    </div>
+    <p class="muted" style="margin-top:12px" data-i18n-html="s4.note"></p>
+  </div>
+
+  <details><summary data-i18n="s4.detH"></summary>
+    <p data-i18n-html="s4.detP"></p>
+  </details>
+
+  <div class="quiz" id="q4">
+    <b data-i18n="q4.q"></b>
+    <div>
+      <button data-q="q4" data-ok="1" data-i18n="q4.a1"></button>
+      <button data-q="q4" data-ok="0" data-i18n="q4.a2"></button>
+      <button data-q="q4" data-ok="0" data-i18n="q4.a3"></button>
+    </div>
+    <div class="fb"></div>
+  </div>
+</section>
+
+<!-- ================= 5 ================= -->
+<section id="s5">
+  <div class="h2flex"><span class="stepnum">5</span><h2 data-i18n="s5.h"></h2></div>
+  <p data-i18n-html="s5.p1"></p>
+
+  <div class="card">
+    <h3 data-i18n="s5.cardH"></h3>
+    <div class="row"><span class="lbl" data-i18n="s5.ep"></span>
+      <input type="range" id="t_ep" min="1" max="5" step="1" value="2" style="flex:1">
+      <span class="val" id="t_epv">2</span></div>
+    <div class="row"><span class="lbl" data-i18n="s5.lr"></span>
+      <input type="range" id="t_lr" min="0" max="2" step="1" value="1" style="flex:1">
+      <span class="val" id="t_lrv"></span></div>
+    <canvas id="t_canvas" width="900" height="300"></canvas>
+    <div style="margin-top:10px">
+      <span class="lamp" id="t_lamp"></span><span id="t_verdict" class="big"></span>
+    </div>
+    <p class="muted" style="margin-top:8px" data-i18n-html="s5.note"></p>
+  </div>
+
+  <details><summary data-i18n="s5.detH"></summary>
+<pre><span class="cmd">make local-debug   <span class="cm"># 1 GPU × 200 samples — always do this first (~10 min)</span>
+make local-lora    <span class="cm"># the real run: 8 GPUs, watch s/it after ~100 steps</span>
+<span class="cm"># resume later without losing progress:</span>
+bash scripts/container_exec.sh bash scripts/train_lora.sh \
+  --epochs 2 --resume_from_checkpoint outputs/lora_518k/checkpoint-3978</span></pre>
+  </details>
+</section>
+
+<!-- ================= 6 ================= -->
+<section id="s6">
+  <div class="h2flex"><span class="stepnum">6</span><h2 data-i18n="s6.h"></h2></div>
+  <p data-i18n-html="s6.p1"></p>
+
+  <div class="card">
+    <h3 data-i18n="s6.cardH"></h3>
+    <div class="row"><span class="lbl" data-i18n="s6.lblPpl"></span>
+      <div style="flex:1"><div class="bar"><i class="m6" data-w="78" style="background:#64748b"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m30" data-w="46" style="background:var(--accent)"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m51" data-w="40" style="background:var(--accent2)"></i></div></div></div>
+    <div class="row"><span class="lbl" data-i18n="s6.lblRouge"></span>
+      <div style="flex:1"><div class="bar"><i class="m6" data-w="25" style="background:#64748b"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m30" data-w="60" style="background:var(--accent)"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m51" data-w="61" style="background:var(--accent2)"></i></div></div></div>
+    <div class="row"><span class="lbl" data-i18n="s6.lblDeg"></span>
+      <div style="flex:1"><div class="bar"><i class="m6" data-w="3" style="background:#64748b"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m30" data-w="0.5" style="background:var(--accent)"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m51" data-w="1.3" style="background:var(--accent2)"></i></div></div></div>
+    <div class="row"><span class="lbl" data-i18n="s6.lblLen"></span>
+      <div style="flex:1"><div class="bar"><i class="m6" data-w="80" style="background:#64748b"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m30" data-w="19" style="background:var(--accent)"></i></div>
+      <div class="bar" style="margin-top:4px"><i class="m51" data-w="21" style="background:var(--accent2)"></i></div></div>
+      <span class="muted" style="font-size:12px" data-i18n-html="s6.refNote"></span></div>
+    <p class="muted" style="margin-top:6px" data-i18n-html="s6.legend"></p>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="s6.findH"></h3>
+    <p data-i18n-html="s6.findP1"></p>
+    <p class="muted" data-i18n-html="s6.findP2"></p>
+  </div>
+
+  <div class="quiz" id="q6">
+    <b data-i18n="q6.q"></b>
+    <div>
+      <button data-q="q6" data-ok="0" data-i18n="q6.a1"></button>
+      <button data-q="q6" data-ok="1" data-i18n="q6.a2"></button>
+      <button data-q="q6" data-ok="0" data-i18n="q6.a3"></button>
+    </div>
+    <div class="fb"></div>
+  </div>
+</section>
+
+<!-- ================= 7 ================= -->
+<section id="s7">
+  <div class="h2flex"><span class="stepnum">7</span><h2 data-i18n="s7.h"></h2></div>
+  <p data-i18n="s7.p1"></p>
+  <div class="grid2">
+    <div class="card"><b data-i18n="s7.c0t"></b>
+      <pre style="margin:8px 0 0"><span class="cmd">make init</span></pre>
+      <p class="muted" style="margin:6px 0 0" data-i18n-html="s7.c0n"></p></div>
+    <div class="card"><b data-i18n="s7.c1t"></b>
+      <pre style="margin:8px 0 0"><span class="cmd">make container-build</span></pre>
+      <p class="muted" style="margin:6px 0 0" data-i18n-html="s7.c1n"></p></div>
+    <div class="card"><b data-i18n="s7.c2t"></b>
+      <pre style="margin:8px 0 0"><span class="cmd">make data        <span class="cm"># 30k sample</span>
+make data-full   <span class="cm"># all ~518k</span></span></pre>
+      <p class="muted" style="margin:6px 0 0" data-i18n-html="s7.c2n"></p></div>
+    <div class="card"><b data-i18n="s7.c3t"></b>
+      <pre style="margin:8px 0 0"><span class="cmd">make local-debug</span></pre>
+      <p class="muted" style="margin:6px 0 0" data-i18n-html="s7.c3n"></p></div>
+    <div class="card"><b data-i18n="s7.c4t"></b>
+      <pre style="margin:8px 0 0"><span class="cmd">make local-lora  <span class="cm"># or: make train-lora (RUN_MODE)</span></span></pre>
+      <p class="muted" style="margin:6px 0 0" data-i18n-html="s7.c4n"></p></div>
+    <div class="card"><b data-i18n="s7.c5t"></b>
+      <pre style="margin:8px 0 0"><span class="cmd">make local-eval</span></pre>
+      <p class="muted" style="margin:6px 0 0" data-i18n-html="s7.c5n"></p></div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3 data-i18n="s7.yoursH"></h3>
+    <p data-i18n-html="s7.yoursP"></p>
+  </div>
+</section>
+
+<footer style="color:var(--dim);font-size:13.5px;padding-bottom:40px" data-i18n-html="foot.txt"></footer>
+</main>
+</div>
+
+<script src="i18n/zhHK.js"></script>
+<script src="i18n/zhHant.js"></script>
+<script src="i18n/zhHans.js"></script>
+<script src="i18n/ja.js"></script>
+<script>
+"use strict";
+/* ================= i18n ================= */
+const I18N = { en: {
+  nav:{title:"📖 LoRA Tutorial", sub:"no math, hands-on",
+    c1:"1 · Why fine-tune?", c2:"2 · Your custom data", c3:"3 · Tokens & the loss mask",
+    c4:"4 · LoRA, visually", c5:"5 · The training loop", c6:"6 · Did it work?", c7:"7 · Run it for real",
+    companion:"Companion to the <a href='../README.md'>README</a> and <code>docs/</code>.<br><br>Everything here reflects the repo's real pipeline and real run numbers."},
+  head:{b1:"⏱ ~25 min", b2:"🧮 zero formulas", b3:"🖱 6 interactive widgets", b4:"📊 real numbers from a real run",
+    title:"Fine-tune an LLM with LoRA — the visual walkthrough",
+    sub:"How do you teach a general-purpose LLM your own specialty — using your own data — without rewriting the whole model? This tutorial walks the exact pipeline in this repo, with widgets you can play with. Every number you'll see comes from a real run: <b>Qwen3.5-4B-Base + 509k finance Q&amp;As + LoRA on one 8-GPU node</b>.",
+    start:"Start →"},
+  s1:{h:"Why fine-tune at all?",
+    p1:"A <b>base model</b> (like <code>Qwen3.5-4B-Base</code>) has read the internet: it can continue text brilliantly, but it doesn't <i>behave</i> like an assistant — it rambles, invents follow-up questions, and thinks out loud.",
+    p2:"<b>Fine-tuning (SFT — Supervised Fine-Tuning)</b> shows the model a few thousand examples of <i>\"this exact question → this exact good answer\"</i> and nudges its weights until behaving that way becomes its habit.",
+    cardH:"See the difference (real outputs from this repo's evaluation)",
+    promptLbl:"Prompt:",
+    btnBase:"🧊 Base model", btnTuned:"🎯 After fine-tuning",
+    note:"The base model's \"thinking out loud\" style isn't wrong — it's just <b>pretraining behavior</b>. SFT replaces it with assistant behavior."},
+  q1:{q:"Quick check: What does \"supervised\" mean in Supervised Fine-Tuning?",
+    a1:"The model supervises itself", a2:"A human curated the question→answer examples", a3:"It runs on a supervised cluster",
+    ok:"Each training row is a human-approved question→answer pair — that's the supervision.",
+    hint:"Think: who decided what a 'good answer' looks like?"},
+  s2:{h:"Your custom data",
+    p1:"SFT eats a simple format: one JSON object per line, each a small conversation with a <code>user</code> turn and an <code>assistant</code> turn (a <code>system</code> persona is optional). <b>Every row is one flashcard.</b>",
+    p2:"This repo's example dataset (Finance-Instruct-500k) ships exactly these three text columns. The prep script cleans rows, samples how many you want, and — crucially — <b>holds out a test split the model never trains on</b>.",
+    cardH:"🖱 Build a flashcard yourself",
+    sys:"system (optional persona)", usr:"user (the question)", asst:"assistant (the good answer)",
+    hint2:"leave <b>assistant</b> empty to see the cleaner drop the row ↓",
+    outLbl:"what lands in <code>data/processed/train.jsonl</code>:",
+    dropU:"// row dropped: empty user", dropA:"// row dropped: empty assistant",
+    kept:"one flashcard ready for training",
+    cmdsH:"The three commands behind this",
+    rule:"Rule of thumb from the real run: mean ≈ 171–247 tokens/example → <code>max_seq_len 4096</code> keeps essentially everything."},
+  q2:{q:"Quick check: Why hold out a test split before training?",
+    a1:"To make training faster", a2:"So evaluation asks questions the model has never seen", a3:"Because the trainer requires three files",
+    ok:"Held-out questions are the only honest measure: if the model saw them in training, the score is memory, not skill.",
+    hint:"What would happen to your evaluation if the model had memorized the questions?"},
+  s3:{h:"Tokens & the loss mask — the heart of SFT",
+    p1:"LLMs read text as <b>tokens</b> (word fragments). Training = predicting the next token. But we only want it to learn <b>the answer</b> — so every prompt token is <b>masked</b> (label <code>-100</code>, which PyTorch skips) and only the assistant's tokens — including the end-of-turn marker <code>&lt;|im_end|&gt;</code> — are trained on.",
+    cardH:"🖱 Toggle the mask and watch what the model would learn",
+    btnMask:"✅ Mask the prompt (correct)", btnNomask:"❌ Train on everything",
+    trainedLbl:"trained tokens",
+    vMask:"<span class='lamp green'></span>Masked: the model learns to <b>answer the question and stop</b>. (Also: less wasted compute on prompt tokens.)",
+    vNo:"<span class='lamp red'></span>Unmasked: the model also learns to <b>generate questions</b> — after fine-tuning it may answer… then invent a new question and answer that too. (This exact bug appeared in this repo when generation didn't stop!)",
+    hover:"Hover any chip: <code>gray = masked (-100)</code>, <code>green = trained</code>, <code>amber = end-of-turn (trained — this is how the model learns to STOP)</code>. This exact masking lives in <code>scripts/model_utils.py → make_encoder</code> and is unit-tested.",
+    detH:"Why is masking such a big deal? (the 30k-run lesson)",
+    detP:"Without masking, part of the model's capacity goes into <b>generating questions</b> instead of answering them. With it, every gradient step says: <i>\"given this question, produce exactly this answer, then stop.\"</i> It's the difference between a student studying an exam's answer key vs. memorizing the exam paper itself."},
+  q3:{q:"Quick check: Why must <|im_end|> be a trained token?",
+    a1:"It's the most frequent token", a2:"It teaches the model when to stop answering", a3:"It must be masked like the prompt",
+    ok:"Without a trained end-of-turn token the model answers… and keeps going. You saw this exact bug in this repo's first evaluation!",
+    hint:"Remember the 'invented follow-up turns' failure?"},
+  s4:{h:"LoRA — teach by sticky notes, not rewrites",
+    p1:"A 4B model has billions of internal knobs (\"weights\"). Rewriting all of them (full fine-tuning) needs ~80 GB just for bookkeeping. <b>LoRA</b> freezes every original knob and learns a tiny pair of \"correction strips\" (called A and B) attached to each layer instead. You only train the strips — often <b>0.5% of the model</b>.",
+    cardH:"🖱 Drag the rank slider — LoRA's single most important knob",
+    rank:"rank r (strips per layer)", trainLbl:"trainable parameters",
+    capLbl:"capacity (how much it can learn)", costLbl:"memory / overfitting risk",
+    cap0:"minimal — style only", cap1:"solid — style + domain", cap2:"generous — nuanced tasks", cap3:"near-full-FT capacity",
+    cost0:"lowest", cost1:"low", cost2:"moderate", cost3:"highest + overfit risk",
+    note:"Your real run used <b>r=16 → 21.2M trainable params = 0.50%</b> of Qwen3.5-4B, ~85 MB of adapter weights. Start at 16, go to 64 if the task needs more nuance, drop to 8 for tiny datasets.",
+    detH:"What \"rank\" actually means (one sentence, no math)",
+    detP:"Each correction strip has <code>r</code> columns: more columns = more independent \"directions of change\" the adapter can express. r=16 gives 16 directions per layer — plenty for teaching style and domain vocabulary; you'd need more only for teaching genuinely new skills.",
+    frozenLbl:"❄ frozen base weights (all of them)",
+    stripNote:"Each strip's thickness = rank r — thicker means more capacity, but also more memory and overfitting risk."},
+  q4:{q:"Quick check: During LoRA training, what happens to the base model's weights?",
+    a1:"They stay frozen — only the strips train", a2:"They train alongside the strips", a3:"They get deleted and rebuilt",
+    ok:"That's the whole point: ~0.5% of parameters train, the 9.3 GB base stays frozen, and only the small adapter is saved.",
+    hint:"The trainable-params counter said 0.50%."},
+  s5:{h:"The training loop — and how to read its curves",
+    p1:"Training is a loop: <b>predict → measure how wrong (the \"loss\") → nudge weights → repeat</b>. Two curves matter: <b>train loss</b> (on the data it's studying) and <b>eval loss</b> (on held-out data it's NOT studying). The gap between them is your truth meter.",
+    cardH:"🖱 Set epochs & learning rate — watch for overfitting",
+    ep:"epochs (full passes)", lr:"learning rate",
+    lr0:"low (safe, slow)", lr1:"just right", lr2:"high (spicy)",
+    axY:"loss (how wrong) ↓", axX:"training steps →", legendT:"— train loss", legendE:"--- eval loss (held out)",
+    vOver:"Overfitting detected — eval loss rising while train loss falls. The best checkpoint was earlier; stop or add data.",
+    vSafe:"Safe and steady — you could afford a higher learning rate or more epochs.",
+    vHealthy:"Healthy: both losses falling, eval tracking train. Stop when eval flattens.",
+    note:"Your real 509k run: train loss 0.730 vs eval loss 0.735 after 1 epoch — the tiny gap says \"still learning, not yet memorizing.\" Rule: stop when <b>eval loss stops falling</b>. The trainer saves the best-eval checkpoint automatically (<code>load_best_model_at_end</code>).",
+    detH:"Map to the real commands"},
+  s6:{h:"Did it work? Honest evaluation",
+    p1:"Never trust training loss alone — a model can memorize its flashcards and still be a bad assistant. This repo evaluates on <b>held-out prompts the model never saw</b>, then compares base vs fine-tuned side by side. These are the real numbers from both runs:",
+    cardH:"Real run: base vs 30k×2epochs vs 509k×1epoch",
+    lblPpl:"perplexity ↓ (lower=better)", lblRouge:"ROUGE-L ↑ (vs refs)", lblDeg:"degenerate outputs ↓", lblLen:"answer length (words)",
+    refNote:"ref = 59",
+    legend:"bars: <span class='frozen'></span>base <span class='trained'></span>30k×2ep <span class='frozen' style='background:var(--accent2)'></span>509k×1ep — animated when this section scrolls into view. Full tables in <code>outputs/eval/</code> and the README.",
+    findH:"The 17×-data finding (the most instructive result)",
+    findP1:"Going 30k → 509k examples improved <b>perplexity −14%</b> (the model knows the domain better) but ROUGE-L stayed <b>flat</b> (+0.004). Why? Because <b>format, style, and stopping saturate within a few thousand examples</b> — the rest of the data buys knowledge, which n-gram scores can't see. Meanwhile exact-match jumped 0% → 5% (some answers now recalled nearly verbatim — check whether that's genuine or memorized in the report's side-by-side samples).",
+    findP2:"Moral: pick your metric for what you actually care about — and always read sample outputs, not just scores."},
+  q6:{q:"Quick check: Train loss keeps falling but eval loss starts rising. What's happening?",
+    a1:"Training is working better than ever", a2:"Overfitting — it's memorizing instead of generalizing", a3:"The learning rate is too low",
+    ok:"Rising eval loss = the model is fitting noise in the training data. The trainer keeps the best-eval checkpoint for exactly this reason.",
+    hint:"One curve measures the studying, the other measures the exam."},
+  s7:{h:"Run it for real — the 6-command journey",
+    p1:"Everything above maps to these commands. Click any card to copy.",
+    c0t:"0 · Configure once", c0n:"creates <code>.env</code> → set scratch dir, model, dataset, run mode. Audit any value: <code>python3 setup/envcfg.py KEY</code>",
+    c1t:"1 · Environment (container route)", c1n:"persistent sandbox on your scratch disk; sidesteps old host python/CUDA entirely",
+    c2t:"2 · Custom data", c2n:"then <code>make inspect</code> — check token lengths",
+    c3t:"3 · Smoke test (always!)", c3n:"1 GPU × 200 samples × 1 epoch — every bug we ever hit died here",
+    c4t:"4 · Train", c4n:"watch <code>s/it</code> after 100 steps; eval loss every 250 steps decides the best checkpoint",
+    c5t:"5 · Evaluate & compare", c5n:"→ <code>outputs/eval/comparison_report.md</code> with side-by-side samples. Read samples, not just scores.",
+    yoursH:"Then make it yours",
+    yoursP:"<b>New dataset?</b> Point <code>DATASET_ID</code> in <code>.env</code> at any HF dataset with <code>system/user/assistant</code> columns (other schemas: adapt <code>normalize()</code> in <code>data_prep/prepare_data.py</code>).<br><b>New model?</b> Change <code>model_name_or_path</code>. LoRA targets, chat template, EOS handling, and multimodal checkpoints adapt automatically — check the transformers version your architecture needs (docs/06 tells the qwen3_5 story).<br><b>Deeper theory?</b> <code>docs/03_training.md</code> has the memory arithmetic; <code>docs/07</code> is the battle scars."},
+  foot:{txt:"Built as part of <b>llm-training</b> — MIT licensed. Tutorial text reflects the repo's real pipeline and real evaluation numbers (Aug 2026 runs). No math was harmed."},
+  dyn:{quizOK:"✓ Correct! ", quizNo:"✗ Not quite — try another option."}
+}};
+
+const LANGS = {
+  en:    {name:"English",       htmlLang:"en"},
+  zhHK:  {name:"廣東話（香港）",  htmlLang:"zh-HK"},
+  zhHant:{name:"繁體中文",        htmlLang:"zh-TW"},
+  zhHans:{name:"简体中文",        htmlLang:"zh-CN"},
+  ja:    {name:"日本語",          htmlLang:"ja"},
+};
+function detectLang(){
+  const saved = localStorage.getItem("tutorial_lang");
+  if(saved && LANGS[saved]) return saved;
+  const n = (navigator.language || "en").toLowerCase();
+  if(n.startsWith("zh-hk") || n.startsWith("zh-yue") || n.startsWith("yue")) return "zhHK";
+  if(n.startsWith("zh-tw") || n.includes("hant")) return "zhHant";
+  if(n.startsWith("zh")) return "zhHans";
+  if(n.startsWith("ja")) return "ja";
+  return "en";
+}
+function dict(lang){ return (window["I18N_"+lang] || {}); }
+function t(path){
+  const lang = window.CUR_LANG || "en";
+  let src = dict(lang), en = I18N.en;
+  for(const p of path.split(".")){
+    src = (src && src[p] !== undefined) ? src[p] : undefined;
+    en  = (en  && en[p]  !== undefined) ? en[p]  : undefined;
+  }
+  if(src !== undefined && src !== null) return src;
+  if(en  !== undefined && en  !== null) return en;
+  return path;
+}
+function setLang(lang){
+  if(!LANGS[lang]) return;
+  window.CUR_LANG = lang;
+  try{ localStorage.setItem("tutorial_lang", lang); }catch(e){}
+  document.documentElement.lang = LANGS[lang].htmlLang;
+  document.querySelectorAll("#langbox button").forEach(b=>b.classList.toggle("on", b.dataset.lang===lang));
+  document.querySelectorAll("[data-i18n]").forEach(el=>{ el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-html]").forEach(el=>{ el.innerHTML = t(el.dataset.i18nHtml); });
+  if(window.s1refresh) window.s1refresh();
+  if(window.s2update) window.s2update();
+  if(window.s3render) window.s3render();
+  if(window.loraRender) window.loraRender();
+  if(window.curve) window.curve();
+  document.querySelectorAll(".quiz .fb").forEach(f=>f.textContent="");
+}
+document.querySelectorAll("#langbox button").forEach(b=>{
+  b.onclick = ()=>setLang(b.dataset.lang);
+});
+
+/* ================= section reveal + nav progress ================= */
+const sections = Array.from(document.querySelectorAll("main section"));
+const navLinks = Array.from(document.querySelectorAll("nav a"));
+const read = new Set();
+const io = new IntersectionObserver((es)=>{
+  es.forEach(e=>{
+    if(e.isIntersecting){
+      e.target.classList.add("visible");
+      read.add(e.target.id);
+      const pct = Math.round(read.size/sections.length*100);
+      const nb = document.getElementById("navbar");
+      if(nb) nb.style.width = pct+"%";
+      navLinks.forEach(a=>{ if(read.has(a.getAttribute("href").slice(1))) a.classList.add("done"); });
+    }
+  });
+},{threshold:0.35});
+sections.forEach(s=>io.observe(s));
+
+/* ================= S1: base vs tuned typewriter ================= */
+const S1OUT = {
+  base:"Hmm, the user is asking about specific economic measures implemented by the Chinese government and their impact on stability. This seems like a request for factual information… The user might be a student researching economic policies, or a professional analyzing global markets…",
+  tuned:"The Chinese government is implementing a range of measures to stabilize the economy, including:\n1. Tax cuts and financial support for the real economy.\n2. Strengthening the financial system to ensure liquidity.\n3. Promoting the service sector, innovation and entrepreneurship.\n4. Enhancing the regulatory framework to protect market stability.\nThese measures together support investment, consumption and employment."
+};
+let s1timer = null, s1cur = "base";
+function s1show(kind){
+  s1cur = kind;
+  const out = document.getElementById("s1out");
+  const txt = S1OUT[kind];
+  const bb = document.getElementById("b1base"), bt = document.getElementById("b1tuned");
+  if(bb) bb.classList.toggle("on", kind==="base");
+  if(bt) bt.classList.toggle("on", kind==="tuned");
+  if(s1timer) clearInterval(s1timer);
+  let i = 0;
+  s1timer = setInterval(()=>{
+    i += 3; out.textContent = txt.slice(0,i) + (i<txt.length ? "▌" : "");
+    if(i >= txt.length){ out.textContent = txt; clearInterval(s1timer); }
+  }, 12);
+}
+window.s1refresh = ()=>s1show(s1cur);
+document.getElementById("b1base").onclick = ()=>s1show("base");
+document.getElementById("b1tuned").onclick = ()=>s1show("tuned");
+
+/* ================= S2: flashcard editor ================= */
+function s2update(){
+  const sys  = document.getElementById("f_sys").value.trim();
+  const usr  = document.getElementById("f_usr").value.trim();
+  const asst = document.getElementById("f_asst").value.trim();
+  const out  = document.getElementById("f_out");
+  const msg  = document.getElementById("f_msg");
+  if(!usr){ out.textContent = t("s2.dropU"); msg.textContent = "⚠ " + t("s2.dropU").replace("// row dropped: ",""); return; }
+  if(!asst){ out.textContent = t("s2.dropA"); msg.textContent = "⚠ " + t("s2.dropA").replace("// row dropped: ",""); return; }
+  const msgs = [];
+  if(sys) msgs.push({role:"system", content:sys});
+  msgs.push({role:"user", content:usr});
+  msgs.push({role:"assistant", content:asst});
+  out.textContent = JSON.stringify({messages:msgs}, null, 2);
+  msg.textContent = "✓ " + t("s2.kept");
+}
+window.s2update = s2update;
+["f_sys","f_usr","f_asst"].forEach(id=>{
+  const el = document.getElementById(id);
+  el.addEventListener("input", s2update);
+  el.addEventListener("change", s2update);
+});
+
+/* ================= S3: token mask playground ================= */
+const S3TOK = {
+  prompt: ["<|im_start|>","user","What","is","compound","interest","?","<|im_end|>"],
+  gen:    ["<|im_start|>","assistant","Interest","earned","on","both","the","principal","and","the","accumulated","interest","."],
+  stop:   ["<|im_end|>"]
+};
+let s3maskOn = true;
+function s3render(){
+  const host = document.getElementById("s3toks");
+  if(!host) return;
+  host.innerHTML = "";
+  let trained = 0, total = 0;
+  const add = (txt, cls)=>{
+    total++;
+    const el = document.createElement("span");
+    el.className = "tok " + cls;
+    const isMasked = (cls==="prompt" && s3maskOn);
+    const safe = txt.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    el.innerHTML = safe + " <small>" + (isMasked ? "-100" : "train") + "</small>";
+    if(!isMasked) trained++;
+    el.title = "token: " + txt + "  |  label: " + (isMasked ? "-100 (skipped)" : "trained");
+    host.appendChild(el);
+  };
+  S3TOK.prompt.forEach(x=>add(x,"prompt"));
+  S3TOK.gen.forEach(x=>add(x,"ans"));
+  S3TOK.stop.forEach(x=>add(x,"stop"));
+  document.getElementById("s3bar").style.width = (trained/total*100).toFixed(0)+"%";
+  document.getElementById("s3cnt").textContent = trained+" / "+total;
+  document.getElementById("s3verdict").innerHTML = s3maskOn ? t("s3.vMask") : t("s3.vNo");
+}
+window.s3render = s3render;
+document.getElementById("s3mask").onclick = ()=>{ s3maskOn=true;
+  document.getElementById("s3mask").classList.add("on");
+  document.getElementById("s3nomask").classList.remove("on"); s3render(); };
+document.getElementById("s3nomask").onclick = ()=>{ s3maskOn=false;
+  document.getElementById("s3nomask").classList.add("on");
+  document.getElementById("s3mask").classList.remove("on"); s3render(); };
+
+/* ================= S4: LoRA rank widget ================= */
+const LORA = { base_params: 4226984960, per_rank: 1327104 }; // real run: r=16 → 21,233,664
+function loraRender(){
+  const rEl = document.getElementById("lora_r");
+  if(!rEl) return;
+  const r = parseInt(rEl.value, 10);
+  document.getElementById("lora_rv").textContent = r;
+  const trainable = r * LORA.per_rank;
+  const pct = trainable / LORA.base_params * 100;
+  document.getElementById("lora_pct").textContent = pct.toFixed(2)+"%  ("+(trainable/1e6).toFixed(1)+"M)";
+  document.getElementById("lora_bar").style.width = Math.min(100, pct*12).toFixed(1)+"%";
+  const cap = document.getElementById("lora_cap");
+  const cost = document.getElementById("lora_cost");
+  if(r<=4){       cap.textContent = t("s4.cap0"); cost.textContent = t("s4.cost0"); }
+  else if(r<=16){ cap.textContent = t("s4.cap1"); cost.textContent = t("s4.cost1"); }
+  else if(r<=32){ cap.textContent = t("s4.cap2"); cost.textContent = t("s4.cost2"); }
+  else {          cap.textContent = t("s4.cap3"); cost.textContent = t("s4.cost3"); }
+  const g = document.getElementById("lora_grid");
+  g.innerHTML = "";
+  g.style.cssText = "display:flex;align-items:center;gap:36px;flex-wrap:wrap;margin:12px 0";
+  // frozen base: tidy 12x4 grid (deterministic — no ragged last row)
+  const baseWrap = document.createElement("div");
+  const baseCap = document.createElement("div");
+  baseCap.className = "muted"; baseCap.style.marginBottom = "6px";
+  baseCap.textContent = t("s4.frozenLbl");
+  const grid = document.createElement("div");
+  grid.style.cssText = "display:grid;grid-template-columns:repeat(12,20px);gap:3px";
+  for(let i=0;i<48;i++){
+    const c = document.createElement("span");
+    c.style.cssText = "display:block;width:20px;height:16px;border-radius:3px;background:var(--mask)";
+    grid.appendChild(c);
+  }
+  baseWrap.appendChild(baseCap); baseWrap.appendChild(grid);
+  // strips: ONE bar each — the bar's THICKNESS is the rank r
+  const mkStrip = (name)=>{
+    const wrap = document.createElement("div");
+    const capL = document.createElement("div");
+    capL.className = "muted"; capL.style.marginBottom = "6px";
+    capL.textContent = "🔥 " + name + " — r = " + r;
+    const bar = document.createElement("div");
+    bar.style.cssText = "width:30px;height:" + Math.round(10 + r*1.8) +
+      "px;border-radius:6px;background:linear-gradient(180deg,var(--accent),var(--accent2));" +
+      "box-shadow:0 0 8px rgba(94,234,212,.35)";
+    wrap.appendChild(capL); wrap.appendChild(bar);
+    return wrap;
+  };
+  const stripCol = document.createElement("div");
+  stripCol.style.cssText = "display:flex;flex-direction:column;gap:20px";
+  stripCol.appendChild(mkStrip("LoRA A"));
+  stripCol.appendChild(mkStrip("LoRA B"));
+  g.appendChild(baseWrap); g.appendChild(stripCol);
+  const note = document.createElement("div");
+  note.className = "muted";
+  note.style.cssText = "flex-basis:100%;margin-top:2px";
+  note.textContent = t("s4.stripNote");
+  g.appendChild(note);
+}
+window.loraRender = loraRender;
+document.getElementById("lora_r").addEventListener("input", loraRender);
+
+/* ================= S5: loss curves on canvas ================= */
+function curve(){
+  const epEl = document.getElementById("t_ep"); if(!epEl) return;
+  const ep = parseInt(epEl.value,10);
+  const lr = parseInt(document.getElementById("t_lr").value,10);
+  document.getElementById("t_epv").textContent = ep;
+  document.getElementById("t_lrv").textContent = t("s5.lr"+lr);
+  const cv = document.getElementById("t_canvas");
+  const W = cv.width = 900, H = cv.height = 300;
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0,0,W,H);
+  const padL=52, padB=34, padT=16, padR=16;
+  const x0=padL, x1=W-padR, y0=H-padB, y1=padT;
+  const lossMin=0.4, lossMax=3.2;
+  const X = f => x0 + (x1-x0)*f;
+  const Y = v => y0 - (y0-y1) * ((v-lossMin)/(lossMax-lossMin));
+  ctx.strokeStyle="#2a3242"; ctx.fillStyle="#8b96ab"; ctx.font="12px sans-serif";
+  ctx.beginPath(); ctx.moveTo(x0,y1); ctx.lineTo(x0,y0); ctx.lineTo(x1,y0); ctx.stroke();
+  for(let v=1;v<=3;v++){ ctx.beginPath(); ctx.moveTo(x0,Y(v)); ctx.lineTo(x1,Y(v));
+    ctx.setLineDash([3,5]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillText(v.toFixed(1), 16, Y(v)+4); }
+  ctx.fillText(t("s5.axY"), 8, 12);
+  ctx.fillText(t("s5.axX"), x1-110, H-10);
+  for(let e=1;e<ep;e++){ const f=e/ep;
+    ctx.strokeStyle="#2a3242"; ctx.beginPath(); ctx.moveTo(X(f),y1); ctx.lineTo(X(f),y0); ctx.stroke();
+    ctx.fillText(t("s5.epoch")+" "+(e+1), X(f)+4, y0-6); }
+  const k   = [0.55, 1.15, 1.9][lr];
+  const nA  = [0.010, 0.045, 0.13][lr];
+  const floor = [0.62, 0.55, 0.58][lr];
+  const over = Math.max(0.15, 0.9 - ep*0.14);
+  ctx.strokeStyle="#5eead4"; ctx.lineWidth=2; ctx.beginPath();
+  let seed = 7;
+  const rnd = ()=>{ seed = (seed*16807)%2147483647; return (seed/2147483647)-0.5; };
+  for(let i=0;i<=140;i++){
+    const f=i/140;
+    let v = (lossMax-0.9)*Math.exp(-k*f) + floor + nA*rnd()*2;
+    ctx.lineTo(X(f), Y(Math.min(lossMax,v)));
+  }
+  ctx.stroke();
+  ctx.strokeStyle="#818cf8"; ctx.lineWidth=2; ctx.setLineDash([6,4]); ctx.beginPath();
+  let best = 99, overfitting=false;
+  for(let i=0;i<=140;i++){
+    const f=i/140; const tt=f*ep;
+    let v = (lossMax-0.9)*Math.exp(-k*f*0.92) + (over + 0.06*Math.max(0, tt-(ep-0.9))*0.6);
+    v += 0.02*rnd();
+    if(v<best) best=v;
+    if(v > best + 0.05) overfitting=true;
+    ctx.lineTo(X(f), Y(Math.min(lossMax,Math.max(lossMin,v))));
+  }
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle="#5eead4"; ctx.fillText(t("s5.legendT"), x0+8, y1+14);
+  ctx.fillStyle="#818cf8"; ctx.fillText(t("s5.legendE"), x0+96, y1+14);
+  const lamp = document.getElementById("t_lamp");
+  const vd = document.getElementById("t_verdict");
+  if(overfitting){ lamp.className="lamp red"; vd.innerHTML = t("s5.vOver"); }
+  else if(ep>=2 && lr===0){ lamp.className="lamp green"; vd.innerHTML = t("s5.vSafe"); }
+  else { lamp.className="lamp green"; vd.innerHTML = t("s5.vHealthy"); }
+}
+window.curve = curve;
+document.getElementById("t_ep").addEventListener("input", curve);
+document.getElementById("t_lr").addEventListener("input", curve);
+
+/* ================= S6: animate metric bars on reveal ================= */
+const barIO = new IntersectionObserver((es)=>{
+  es.forEach(e=>{ if(e.isIntersecting){
+    e.target.querySelectorAll("[data-w]").forEach(b=>{ b.style.width = b.dataset.w+"%"; });
+    barIO.unobserve(e.target);
+  }});
+},{threshold:0.3});
+document.querySelectorAll("#s6 .card").forEach(c=>barIO.observe(c));
+
+/* ================= quizzes ================= */
+document.querySelectorAll(".quiz button").forEach(btn=>{
+  btn.onclick = ()=>{
+    const quiz = btn.closest(".quiz");
+    const fb = quiz.querySelector(".fb");
+    quiz.querySelectorAll("button").forEach(b=>{ b.classList.remove("on"); b.style.borderColor=""; b.style.color=""; });
+    if(btn.dataset.ok==="1"){
+      btn.classList.add("on"); btn.style.borderColor="var(--good)";
+      fb.style.color="var(--good)"; fb.textContent = t("dyn.quizOK") + t(quiz.id + ".ok");
+    } else {
+      btn.style.borderColor="var(--bad)"; btn.style.color="var(--bad)";
+      fb.style.color="var(--warn)"; fb.textContent = t("dyn.quizNo") + " " + t(quiz.id + ".hint");
+    }
+  };
+});
+
+/* ================= boot ================= */
+s2update(); s3render(); loraRender(); curve(); s1show("base");
+setLang(detectLang());
+</script>
+</body>
+</html>

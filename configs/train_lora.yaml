@@ -1,0 +1,41 @@
+# =============================================================================
+# LoRA SFT of Qwen/Qwen3.5-4B-Base on one DGX H800 node (8x H800 80 GB)
+#
+# Model facts (verified 2026-04 on the HF repo):
+#   - Qwen3_5ForConditionalGeneration: 4B-param LM (+ vision tower, ~5B total,
+#     ~9.3 GB bf16). Hybrid: 24 Gated-DeltaNet linear-attention + 8 full-attention
+#     layers. Context 262,144. Tokenizer vocab 248,320, chat template included.
+#   - Requires transformers >= 4.57.
+#
+# Effective batch = per_device_batch_size x grad_accum x num_gpus
+#                 = 4 x 4 x 8 = 128 examples/step
+# =============================================================================
+model_name_or_path: Qwen/Qwen3.5-4B-Base
+mode: lora
+
+dataset: data/processed/train.jsonl
+eval_dataset: data/processed/val.jsonl
+output_dir: outputs/lora_v1
+
+max_seq_len: 4096          # drop examples longer than this (see inspect_data stats)
+per_device_batch_size: 4   # 4B model, LoRA, flash-attn + grad ckpt: ~20-30 GB/GPU
+grad_accum: 4              # 4 * 4 * 8 GPUs = 128 global batch
+epochs: 2
+learning_rate: 1e-4        # LoRA standard; full FT uses 1e-5
+weight_decay: 0.0
+warmup_ratio: 0.03
+seed: 42
+
+# LoRA hyperparameters (r=16 / alpha=32 is a solid default; try r=64 for more capacity)
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+# lora_target_modules:      # unset = auto-detect (all Qwen linear projections in
+                            # the LANGUAGE stack; vision tower excluded)
+
+attn: auto                 # flash_attention_2 if installed, else sdpa
+# load_in_4bit: true       # uncomment + pip install bitsandbytes for QLoRA
+
+logging_steps: 10
+save_steps: 250
+eval_steps: 250

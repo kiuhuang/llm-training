@@ -1,0 +1,54 @@
+# --- Data & artifacts (never commit weights or datasets) ---
+data/
+!data/.gitkeep
+outputs/
+!outputs/.gitkeep
+checkpoints/
+runs/
+wandb/
+logs/
+*.safetensors
+*.safetensors.index.json
+*.gguf
+*.onnx
+*.bin
+*.pt
+*.pth
+*.ckpt
+*.adapter_model.safetensors
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+
+# --- Containers (images are multi-GB, never commit) ---
+*.sif
+*.sif.lock
+images/
+
+# --- Tooling / local env ---
+.env
+.env.*
+!.env.example
+*.local
+.cache/
+nohup.out
+slurm-*.out
+*.log
+
+# --- Generated container build files ---
+container/.build-*.def
+
+# --- Large eval dumps ---
+outputs/**/*.jsonl

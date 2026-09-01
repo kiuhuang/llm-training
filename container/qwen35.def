@@ -1,0 +1,123 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:25.03-py3
+
+%labels
+    Author kiuhuang
+    Description "SFT of Qwen3.5-4B-Base on 8x H800 — NGC PyTorch + HF stack"
+    cuda-version "12.8.1 (runs on any driver >= 570; node driver is 580.159.03 / CUDA 13.0)"
+    torch "2.7.0a0+7c8ec84dab (NGC build)"
+
+%help
+    Apptainer image for the llm-training repo.
+    Build:   make container-build        (uses CONTAINER_BASE from .env)
+    Verify:  apptainer exec --nv images/qwen35.sif python setup/verify_env.py
+    Train:   make local-lora-ctn         (or slurm/train_lora_container.sbatch)
+
+    Why this base: NGC 25.03 ships torch 2.7.0a0 + NCCL 2.25.1 + CUDA 12.8.1
+    with flash-attn available and a full toolkit (nvcc) for any JIT ops.
+    NOTE on versions: NGC torch builds carry pre-release strings
+    ("2.7.0a0+..."). Recent transformers releases gate on a MINIMUM torch and
+    PEP440-compare "2.5.0a0" as BELOW 2.5.0 — which broke transformers on the
+    older 24.09 base. 2.7.0a0 passes the >=2.5 gate. We pin transformers to
+    the 4.x line (<5) so a future major version cannot demand an even newer
+    final torch than the NGC build provides.
+
+%post
+    set -e
+    export PIP_NO_CACHE_DIR=1
+    # NGC 25.03+ ships /etc/pip/constraint.txt (pip constraints) to keep the
+    # image's package set frozen (e.g. tensorboard==2.16.2) — any "-U" that
+    # touches a pinned package dies with ResolutionImpossible. Point the
+    # constraint at an empty file to disable it. (/dev/null is an existing,
+    # empty, always-readable file — the most portable way to say "no limits".)
+    export PIP_CONSTRAINT=/dev/null
+
+    echo "== NGC base: $(python -c 'import torch; print(torch.__version__)') =="
+    echo "== upgrading HuggingFace stack (torch/NCCL/flash-attn stay untouched) =="
+    # transformers >= 5.16.1 is REQUIRED: the qwen3_5 architecture ships in the
+    # 5.x line (4.57.x does NOT recognize it — the "4.57.0.dev0" string in the
+    # model's config.json is the exporter's version, not a support guarantee).
+    # 5.16.1's torch gate is ">= 2.5", satisfied by this base's 2.7.0a0 build.
+    pip install -U \
+        "transformers>=5.16.1,<6" \
+        "datasets>=2.20.0,<4" \
+        "accelerate>=0.33.0" \
+        "peft>=0.12.0" \
+        "trl>=0.9.6" \
+        "deepspeed>=0.14.4" \
+        "bitsandbytes>=0.43.1" \
+        "rouge-score>=0.1.2" \
+        "scikit-learn>=1.4.0" \
+        "tensorboard>=2.16" \
+        "pyyaml>=6.0" \
+        "huggingface_hub>=0.24.0"
+    # datasets<4 note: NGC bundles RAPIDS (cudf pins pyarrow<20); datasets 5.x
+    # would force-upgrade pyarrow and break that pin. datasets 3.x fully covers
+    # our json + map/filter pipeline, so NGC internals stay untouched.
+
+    # flash-attn ships prebuilt in recent NGC PyTorch images; only compile if missing
+    if ! python -c "import flash_attn" 2>/dev/null; then
+        echo "== flash-attn missing -> building (this is the slow step) =="
+        pip install flash-attn --no-build-isolation \
+            || echo "WARNING: flash-attn unavailable; training falls back to PyTorch SDPA"
+    fi
+
+    # import sanity at build time (login node has no GPU -> do not assert cuda).
+    # STRICT on the transformers<->torch version gate (the failure that broke
+    # the 24.09 base) AND on qwen3_5 architecture support (4.57.x lacks it —
+    # the bug that surfaced at first training). peft/datasets are checked via
+    # package METADATA only: importing peft probes transformer_engine, whose
+    # triton kernels need an ACTIVE GPU driver — absent on a GPU-less build
+    # host, present at runtime (--nv). Runtime imports get exercised by the
+    # first training run and by:
+    #   bash scripts/container_exec.sh python -c "import peft, trl; print('ok')"
+    python - <<'EOF'
+import torch, transformers
+from transformers.utils import is_torch_available
+assert is_torch_available(), (
+    "transformers disabled PyTorch (version gate) — torch "
+    f"{torch.__version__} is too old for transformers {transformers.__version__}"
+)
+try:
+    from transformers import AutoConfig
+    AutoConfig.for_model("qwen3_5")
+    qwen3_5 = "supported"
+except Exception as e:  # noqa: BLE001
+    qwen3_5 = f"NOT SUPPORTED ({type(e).__name__}) — upgrade transformers"
+assert qwen3_5 == "supported", f"qwen3_5 architecture {qwen3_5} (transformers {transformers.__version__})"
+from importlib.metadata import version as pkg_version
+print("torch        ", torch.__version__)
+print("transformers ", transformers.__version__, "(sees torch: OK, qwen3_5: OK)")
+for pkg in ("peft", "datasets", "accelerate", "trl", "deepspeed", "bitsandbytes"):
+    print(f"{pkg:<13}", pkg_version(pkg))
+EOF
+
+%environment
+    export TOKENIZERS_PARALLELISM=false
+    # hf_transfer is retired in huggingface_hub 1.x — Xet is the fast path now
+    export HF_XET_HIGH_PERFORMANCE=1
+    # Apptainer binds $HOME by default; any host ~/.local/lib/python3.X would
+    # SHADOW the container's packages (user-site > system dist-packages) and
+    # cause version-mixing ImportErrors. Ignore user site-packages entirely.
+    export PYTHONNOUSERSITE=1
+    # bind a fast NVMe scratch dir to /hf_cache and HF_HOME=/hf_cache at runtime
+    # (see scripts/container_exec.sh); default inside the container:
+    export HF_HOME=${HF_HOME:-/hf_cache}
+
+%runscript
+    cd /workspace 2>/dev/null || true
+    exec python "$@"
+
+%test
+    # %test executes on the build host (no GPU) and on `apptainer test`.
+    # Same rule as %post: import only GPU-safe packages (torch/transformers);
+    # verify the rest via metadata — importing peft would probe
+    # transformer_engine, whose triton kernels need an ACTIVE GPU driver.
+    python - <<'EOF'
+import torch, transformers
+from importlib.metadata import version as v
+from transformers.utils import is_torch_available
+assert is_torch_available(), "torch/transformers version gate failed"
+print("container %test OK: torch", torch.__version__,
+      "| transformers", transformers.__version__, "| peft", v("peft"))
+EOF

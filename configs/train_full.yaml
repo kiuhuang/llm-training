@@ -1,0 +1,33 @@
+# =============================================================================
+# FULL-parameter SFT of Qwen/Qwen3.5-4B-Base on one DGX H800 node.
+#
+# Memory math (why DeepSpeed is mandatory here), per parameter in bf16 training
+# with AdamW: 2 B (weights) + 2 B (grads) + 12 B (fp32 master/m/v) ~= 16 B/param.
+# A ~5B model => ~80 GB — does NOT fit on one 80 GB H800. ZeRO-2 shards the
+# optimizer states + grads across 8 GPUs (~10 GB/GPU of states); weights are
+# replicated (~10 GB/GPU), leaving plenty of room for activations at seq 4096.
+# If you still OOM: scripts/train_full.sh with ZERO=3 (shards weights too).
+#
+# Run via:  bash scripts/train_full.sh     (adds --deepspeed configs/deepspeed_zero2.json)
+# =============================================================================
+model_name_or_path: Qwen/Qwen3.5-4B-Base
+mode: full
+
+dataset: data/processed/train.jsonl
+eval_dataset: data/processed/val.jsonl
+output_dir: outputs/full_v1
+
+max_seq_len: 4096
+per_device_batch_size: 2
+grad_accum: 8              # 2 * 8 * 8 GPUs = 128 global batch (same as LoRA config)
+epochs: 2
+learning_rate: 1e-5        # full FT: 10x lower than LoRA, or you wreck the base model
+weight_decay: 0.01
+warmup_ratio: 0.03
+seed: 42
+
+attn: auto
+
+logging_steps: 10
+save_steps: 250            # full checkpoints are BIG (~50 GB each incl. optimizer state);
+eval_steps: 250            # consider adding --save_only_model if disk is tight

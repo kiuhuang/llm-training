@@ -187,6 +187,33 @@ chat turn end (`<|im_end|>`), transformers 5.x removed several
 `TrainingArguments` kwargs (the script adapts automatically), and
 `--cleanenv` needs an explicit pass-through list for config variables.
 
+## Security & privacy
+
+- **`.env` is gitignored and must stay that way** — it holds your cluster
+  paths and optionally an `HF_TOKEN`. Never commit it; never paste its
+  contents into chats or issues. Audit what the loader extracts with
+  `python3 setup/envcfg.py`.
+- If a credential ever does reach a chat/issue, **rotate it** at the provider
+  (e.g. https://huggingface.co/settings/tokens) — deleting the message is not
+  enough.
+- The git history contains no secrets (audited before publishing), but treat
+  every future `git add -A` with the same care: large files and credentials
+  are the two classic accidents.
+
+## Publishing
+
+The repo is prepared for public release:
+
+1. Squashed history (single clean commit — no site/node names anywhere).
+2. GitHub Pages workflow included: after enabling **Settings → Pages →
+   Source: "GitHub Actions"**, every push to `main` publishes the multilingual
+   tutorial at `https://<owner>.github.io/<repo>/` (also re-runnable via the
+   workflow's "Run workflow" button).
+3. Suggested settings: description *"Fine-tune any LLM with LoRA/SFT —
+   animated multilingual tutorial, honest evaluation, HPC-ready pipeline"*;
+   topics `llm` `lora` `fine-tuning` `sft` `qwen` `transformers` `apptainer`
+   `hpc`.
+
 ## License
 
 MIT (see LICENSE). Model and dataset are Apache-2.0 — respect both upstream

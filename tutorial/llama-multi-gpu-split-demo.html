@@ -1,0 +1,1281 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llama.cpp multi-GPU · layer vs tensor split (row = legacy) — interactive demo</title>
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#10161f; --panel2:#0c1119; --line:#1e2837; --line2:#2a3648;
+    --tx:#dce5f2; --dim:#8b98af; --faint:#5b6779;
+    --c0:#5aa2ff; --c1:#3fd68f; --c2:#ffb454; --c3:#f47bb3;
+    --kv:#9d7bff; --cb:#46536b; --acc:#5aa2ff;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,"Liberation Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(1200px 500px at 70% -10%, #14203355, transparent),
+      var(--bg);
+    color:var(--tx);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  .wrap{max-width:1340px;margin:0 auto;padding:18px 20px 60px}
+  a{color:var(--c0)}
+  h1{font-size:21px;margin:0 0 2px;letter-spacing:.2px}
+  h1 .thin{color:var(--dim);font-weight:400}
+  .sub{color:var(--dim);margin:0 0 16px;font-size:13px}
+  .sub code{font-family:var(--mono);background:#161e2b;padding:1px 5px;border-radius:5px;color:#aebfd9;font-size:12px}
+
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .panel h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);font-weight:600}
+
+  /* header */
+  .topbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  .seg{display:inline-flex;border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+  .seg button{
+    appearance:none;border:0;background:transparent;color:var(--dim);
+    padding:7px 16px;font:600 13px/1.3 inherit;cursor:pointer;letter-spacing:.3px;text-align:left
+  }
+  .seg button small{display:block;font-size:9.5px;font-weight:500;letter-spacing:.6px;opacity:.7;text-transform:uppercase}
+  .seg button.on{color:#0b1017}
+  .seg button.on small{opacity:.75}
+  #modeLayer.on{background:var(--c0)}
+  #modeTensor.on{background:var(--c1)}
+  #modeRow{color:var(--faint)}
+  #modeRow.on{background:#8b93a7;color:#0b1017}
+  .modedesc{color:var(--dim);font-size:12.5px;flex:1;min-width:220px}
+  .runbtns{display:flex;gap:8px;flex-wrap:wrap}
+  button.act{
+    appearance:none;border:1px solid var(--line2);background:#151d2a;color:var(--tx);
+    border-radius:9px;padding:8px 14px;font:600 13px/1 inherit;cursor:pointer
+  }
+  button.act:hover{border-color:#3b4c66}
+  button.act.primary{background:var(--c0);border-color:var(--c0);color:#081020}
+  button.act.primary:hover{filter:brightness(1.1)}
+
+  .cols{display:grid;grid-template-columns:315px 1fr;gap:16px;align-items:start}
+  @media (max-width:1000px){.cols{grid-template-columns:1fr}}
+
+  /* side controls */
+  .side{display:flex;flex-direction:column;gap:14px;position:sticky;top:14px}
+  @media (max-width:1000px){.side{position:static}}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:7px 0}
+  .row label{color:var(--dim);font-size:12.5px}
+  .row .val{font-family:var(--mono);font-size:12px;color:var(--tx);background:#161e2b;padding:1px 7px;border-radius:6px;min-width:64px;text-align:right}
+  input[type=range]{width:130px;accent-color:var(--acc)}
+  select{
+    background:#151d2a;color:var(--tx);border:1px solid var(--line2);border-radius:8px;
+    padding:5px 8px;font:inherit;font-size:13px
+  }
+  .tsgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;margin-top:6px;transition:opacity .15s}
+  .tsgrid.dimmed{opacity:.35;pointer-events:none}
+  .tsg{border:1px solid var(--line);border-radius:10px;padding:7px 9px}
+  .tsg .t{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:4px}
+  .tsg .t b{color:var(--tx)}
+  .tsg input[type=range]{width:100%}
+  .chiprow{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .chip{
+    border:1px solid var(--line2);border-radius:999px;color:var(--dim);font-size:11.5px;
+    padding:3px 10px;cursor:pointer;background:transparent
+  }
+  .chip:hover{color:var(--tx);border-color:#3b4c66}
+  .hint{color:var(--faint);font-size:11.5px;margin-top:8px}
+  .hint b{color:var(--dim)}
+  .dimmed{opacity:.38;pointer-events:none}
+  pre.cli{
+    background:#0b0f16;border:1px solid var(--line);border-radius:10px;padding:10px 12px;
+    font-family:var(--mono);font-size:11.8px;color:#9fd0a4;white-space:pre-wrap;word-break:break-word;margin:0
+  }
+  pre.cli .cm{color:var(--faint)}
+  .copybtn{margin-top:8px;width:100%}
+
+  /* stage */
+  .stage{display:flex;flex-direction:column;gap:14px;min-width:0}
+  #banner{
+    display:flex;align-items:center;gap:10px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:12px;padding:10px 14px;font-family:var(--mono);font-size:13px;color:#cfe0f5
+  }
+  #banner .dot{width:9px;height:9px;border-radius:50%;background:#39465c;flex:none}
+  #banner.live .dot{animation:blink .7s infinite alternate}
+  @keyframes blink{from{opacity:.35}to{opacity:1}}
+
+  /* token stream */
+  #stream{display:flex;flex-wrap:wrap;gap:6px;min-height:34px}
+  .tok{
+    font-family:var(--mono);font-size:12px;border:1px solid var(--line2);border-radius:8px;
+    padding:4px 9px;color:#a8b6cc;background:#0e141d;visibility:hidden
+  }
+  .tok.prompt{border-style:dashed;color:#7f8ea6;visibility:visible;opacity:.45}
+  .tok.prompt.done{opacity:1}
+  .tok.gen{border-color:#2c5d46;color:#b9ecd2;background:#0d1713}
+  .tok.done{visibility:visible}
+  .tok.latest{border-color:#4fd08e;box-shadow:0 0 10px -2px #3fd68f88}
+
+  /* model stack */
+  #stackWrap{overflow-x:auto;padding-bottom:4px}
+  #stack{display:flex;gap:1px;height:34px;min-width:640px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+  #stack .cell{flex:1;min-width:7px;opacity:.92}
+  #stack .cell.dimcell{opacity:.35}
+  #stackLbls{display:flex;gap:2px;min-width:640px;margin-top:5px}
+  #stackLbls .lbl{
+    font-size:11px;color:var(--dim);font-family:var(--mono);white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis;text-align:center;padding:2px 0;border-bottom:2px solid
+  }
+
+  /* GPU cards */
+  #cardZone{position:relative;padding-top:64px}
+  #cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+  @media (max-width:760px){#cards{grid-template-columns:repeat(2,1fr)}}
+  .card{
+    --c:var(--c0);
+    background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px 13px;
+    min-height:172px;position:relative;transition:box-shadow .15s,border-color .15s
+  }
+  .card.on{border-color:var(--c);box-shadow:0 0 0 1px var(--c),0 0 34px -10px var(--c)}
+  .card.off{opacity:.45}
+  .card .chead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+  .card .chead b{font-size:14px}
+  .card .chead span{color:var(--faint);font-size:11px}
+  .card .led{width:8px;height:8px;border-radius:50%;background:#39465c;display:inline-block;margin-right:6px;vertical-align:1px}
+  .card.on .led{background:var(--c);box-shadow:0 0 8px var(--c)}
+  .vram{height:14px;border-radius:6px;background:#0a0e15;border:1px solid var(--line);overflow:hidden;display:flex;position:relative}
+  .vram i{display:block;height:100%}
+  .vram .sw{background:var(--c);opacity:.85}
+  .vram .kv{background:var(--kv);opacity:.75}
+  .vram .cb{background:var(--cb)}
+  .vram.over{border-color:#ff5d5d;box-shadow:0 0 10px -2px #ff5d5d}
+  .vtxt{font-family:var(--mono);font-size:10.6px;color:var(--faint);margin-top:4px;display:flex;justify-content:space-between}
+  .cap{
+    margin-top:8px;font-family:var(--mono);font-size:11.6px;color:#c3d0e4;min-height:30px;
+    background:#0b1018;border:1px solid var(--line);border-radius:8px;padding:5px 8px
+  }
+  .prog{height:5px;background:#0a0e15;border-radius:3px;margin-top:8px;overflow:hidden}
+  .prog i{display:block;height:100%;width:0%;background:var(--c)}
+  .util{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:10.6px;color:var(--faint);font-family:var(--mono)}
+  .util .ubar{flex:1;height:4px;background:#0a0e15;border-radius:2px;overflow:hidden}
+  .util .ubar i{display:block;height:100%;width:0;background:#7286a5}
+  .warn{
+    position:absolute;top:8px;right:10px;background:#3a1216;color:#ff8585;border:1px solid #6e2430;
+    font-size:10.5px;border-radius:6px;padding:2px 7px;display:none;font-family:var(--mono)
+  }
+  .card.over .warn{display:block}
+  .sumbadge{
+    position:absolute;left:50%;top:44%;transform:translate(-50%,-50%) scale(.6);
+    background:#f2f6ff;color:#10161f;font-weight:800;font-size:15px;border-radius:10px;
+    padding:3px 10px;opacity:0;transition:opacity .12s,transform .12s;pointer-events:none
+  }
+  .card.sum .sumbadge{opacity:1;transform:translate(-50%,-50%) scale(1)}
+
+  #ov{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+  .pk{
+    position:absolute;left:0;top:0;transform:translate(-100px,-100px);
+    font-family:var(--mono);font-size:10.5px;padding:3px 8px;border-radius:999px;
+    background:#101823;border:1.5px solid var(--c0);color:#e6eefb;white-space:nowrap;
+    box-shadow:0 2px 14px -2px #000a
+  }
+
+  /* gantt */
+  #ganttBox{position:relative}
+  canvas#gantt{width:100%;height:190px;display:block;border-radius:10px;background:#0a0e15;border:1px solid var(--line)}
+  #scrub{width:100%;margin-top:10px}
+  .legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)}
+  .legend .sw{display:inline-block;width:12px;height:9px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+
+  /* stats */
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+  .stat .k{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:1px}
+  .stat .v{font-family:var(--mono);font-size:16px;margin-top:3px;color:var(--tx)}
+  .stat .v small{color:var(--dim);font-size:11px}
+  #stProg{grid-column:1/-1}
+
+  /* compare */
+  table.cmp{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.cmp th,table.cmp td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line)}
+  table.cmp th:first-child,table.cmp td:first-child{text-align:left;color:var(--dim)}
+  table.cmp th{color:var(--tx);font-size:12px}
+  .better{color:#4fd08e}.worse{color:#ff8585}.eq{color:var(--dim)}
+  .cmpnote{color:var(--faint);font-size:11.5px;margin-top:8px}
+
+  /* log */
+  #log{
+    height:190px;overflow-y:auto;background:#0a0e15;border:1px solid var(--line);border-radius:10px;
+    padding:8px 12px;font-family:var(--mono);font-size:11.4px;line-height:1.7;color:#9db0c9
+  }
+  #log .t{color:var(--faint)}
+
+  /* explainers */
+  .explain{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+  @media (max-width:900px){.explain{grid-template-columns:1fr}}
+  .explain .panel ul{margin:6px 0 0;padding-left:18px;color:#b9c6da;font-size:12.8px}
+  .explain .panel li{margin:5px 0}
+  .explain .flag{font-family:var(--mono);background:#161e2b;padding:1px 6px;border-radius:5px;font-size:11.5px;color:#aebfd9}
+  .good{color:#4fd08e}.bad{color:#ff9d9d}
+  .badge{display:inline-block;font-size:10px;font-weight:700;letter-spacing:.8px;border-radius:6px;padding:2px 7px;vertical-align:2px;text-transform:uppercase}
+  .badge.exp{background:#123527;color:#4fd08e;border:1px solid #1e5a40}
+  .badge.dep{background:#3a1216;color:#ff8585;border:1px solid #6e2430}
+  .badge.def{background:#12283a;color:#5aa2ff;border:1px solid #1e3f5c}
+  .footnote{color:var(--faint);font-size:11.8px;margin-top:14px;line-height:1.7}
+  .kbd{font-family:var(--mono);font-size:11px;border:1px solid var(--line2);border-bottom-width:2px;border-radius:5px;padding:0 5px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>llama.cpp multi-GPU <span class="thin">· layer / tensor / row split on 4×GPUs — animated inference</span></h1>
+  <p class="sub">Set with <code>-sm</code>. <code>layer</code> (default) = pipeline parallelism: each GPU holds contiguous layers, the token travels GPU0→1→2→3. <code>tensor</code> (experimental, 2026) = real tensor parallelism: every layer sharded across all GPUs — weights <i>and</i> KV cache — via a "meta device" abstraction, with cross-GPU all-reduces per layer. <code>row</code> is the <i>deprecated</i> legacy TP path (dense weights cut by rows, partials summed) — kept here only for comparison. <code>-ts a,b,c,d</code> sizes the split in layer/row; <code>tensor</code> shards evenly.</p>
+
+  <div class="topbar">
+    <div class="seg" role="tablist" aria-label="split mode">
+      <button id="modeLayer" class="on">■ Layer split<small>default · pipeline</small></button>
+      <button id="modeTensor">▦ Tensor split<small>experimental · TP</small></button>
+      <button id="modeRow">▤ Row split<small>deprecated · legacy</small></button>
+    </div>
+    <div class="modedesc" id="modeDesc"></div>
+    <div class="runbtns">
+      <button class="act primary" id="btnRun">▶ Run inference</button>
+      <button class="act" id="btnPause">⏸ Pause</button>
+      <button class="act" id="btnStep">⏭ Step</button>
+      <button class="act" id="btnReset">⟲ Reset</button>
+      <button class="act" id="btnCompare">⚖ Compare modes</button>
+    </div>
+  </div>
+
+  <div class="cols">
+    <!-- ============ SIDE: CONTROLS ============ -->
+    <div class="side">
+      <div class="panel">
+        <h3>Model &amp; run</h3>
+        <div class="row"><label>Model</label>
+          <select id="modelSel">
+            <option value="m8">8B · Q4_K_M (32 layers)</option>
+            <option value="m70">70B · Q4_K_M (80 layers)</option>
+          </select>
+        </div>
+        <div class="row"><label>Context <span style="opacity:.6">-c</span></label>
+          <select id="ctxSel"><option>2048</option><option selected>4096</option><option>8192</option></select>
+        </div>
+        <div class="row"><label>Prompt tokens</label>
+          <select id="promptSel"><option>16</option><option selected>64</option><option>256</option></select>
+        </div>
+        <div class="row"><label>Generated tokens</label>
+          <select id="genSel"><option>16</option><option selected>24</option><option>48</option></select>
+        </div>
+        <div class="row"><label>Pipeline prefill ubatches <span style="opacity:.6">(layer mode)</span></label>
+          <input type="checkbox" id="pipeChk" checked style="accent-color:var(--acc);transform:scale(1.2)">
+        </div>
+        <div class="row"><label>Animation speed</label>
+          <input type="range" id="speedR" min="0.25" max="16" step="0.05" value="2" style="width:120px">
+          <span class="val" id="speedVal">2.0×</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Split ratios <span style="text-transform:none">-ts</span> <span style="text-transform:none;letter-spacing:0">(layer / row)</span></h3>
+        <div class="tsgrid" id="tsGrid"></div>
+        <div class="chiprow">
+          <button class="chip" data-ts="1,1,1,1">balanced 1,1,1,1</button>
+          <button class="chip" data-ts="3,2,1,1">match VRAM 3,2,1,1</button>
+          <button class="chip" data-ts="4,2,1,1">big first 4,2,1,1</button>
+          <button class="chip" data-ts="2,2,1,0">skip GPU3 2,2,1,0</button>
+        </div>
+        <div class="hint" id="tsHint">Ratios are normalized (3,2,1,1 ⇒ 3/7, 2/7, 1/7, 1/7). A <b>0</b> excludes that GPU. Watch the VRAM bars: exceeding a card's capacity is the real-world OOM.</div>
+      </div>
+
+      <div class="panel">
+        <h3>Simulated hardware timings</h3>
+        <div class="row" title="Time for one GPU to crunch one full transformer layer for one token">
+          <label>1 layer on 1 GPU</label><input type="range" id="tLayerR" min="0.4" max="3" step="0.05"><span class="val" id="tLayerVal"></span>
+        </div>
+        <div class="row" title="Latency to push the activation vector across PCIe to the next GPU (layer mode hand-off)">
+          <label>PCIe hop (layer)</label><input type="range" id="tPcieR" min="0.05" max="1.5" step="0.05"><span class="val" id="tPcieVal"></span>
+        </div>
+        <div class="row" title="Cost of one cross-GPU reduction: partial-sum + re-broadcast (row) or ring all-reduce (tensor), incl. sync">
+          <label><span id="tReduceLbl">Σ sync / reduction</span></label><input type="range" id="tReduceR" min="0.05" max="2" step="0.05" value="0.9"><span class="val" id="tReduceVal"></span>
+        </div>
+        <div class="hint">Illustrative numbers, but the <i>shape</i> is real: layer mode pays a hop per GPU boundary; row pays one sync per layer; tensor pays two all-reduces per layer. Drop the sync cost low (NVLink-class) and watch tensor pull ahead. On screen, ops shorter than a blink are clamped to a minimum duration — the Gantt and stats always show true simulated time.</div>
+      </div>
+
+      <div class="panel">
+        <h3>Equivalent llama.cpp command</h3>
+        <pre class="cli" id="cli"></pre>
+        <button class="act copybtn" id="btnCopy">⧉ Copy</button>
+      </div>
+    </div>
+
+    <!-- ============ STAGE ============ -->
+    <div class="stage">
+
+      <div id="banner"><span class="dot"></span><span id="bannerTx">ready — press ▶ Run inference (or Space)</span></div>
+
+      <div class="panel">
+        <h3>Token stream</h3>
+        <div id="stream"></div>
+      </div>
+
+      <div class="panel">
+        <h3>Model stack — who owns which layer</h3>
+        <div id="stackWrap">
+          <div id="stack"></div>
+          <div id="stackLbls"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>GPUs — live</h3>
+        <div id="cardZone">
+          <div id="cards"></div>
+          <div id="ov"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Timeline — GPU busy charts (Gantt)</h3>
+        <div id="ganttBox"><canvas id="gantt"></canvas></div>
+        <input type="range" id="scrub" min="0" max="1000" value="0" step="0.1" aria-label="timeline scrubber">
+        <div class="legend">
+          <span><i class="sw" style="background:#5aa2ff"></i>compute (GPU0)</span>
+          <span><i class="sw" style="background:#3fd68f"></i>compute (GPU1)</span>
+          <span><i class="sw" style="background:#ffb454"></i>compute (GPU2)</span>
+          <span><i class="sw" style="background:#f47bb3"></i>compute (GPU3)</span>
+          <span><i class="sw" style="background:#8b93a7"></i>PCIe hop</span>
+          <span><i class="sw" style="background:#e9eef8"></i>⇄ reduction (AR / Σ)</span>
+          <span><i class="sw" style="background:#b48cff"></i>sample / head</span>
+          <span style="color:var(--faint)">· micro-ops are stretched on screen to stay visible — Gantt &amp; stats show true simulated time</span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3>Stats <span id="stLive" style="text-transform:none;letter-spacing:0;color:var(--faint)"></span></h3>
+        <div class="statgrid">
+          <div class="stat" id="stProg"><div class="k">progress</div><div class="v">—</div></div>
+          <div class="stat"><div class="k">per-token latency</div><div class="v" id="stLat">—</div></div>
+          <div class="stat"><div class="k">generation</div><div class="v" id="stTps">—</div></div>
+          <div class="stat"><div class="k">prompt processing</div><div class="v" id="stPf">—</div></div>
+          <div class="stat"><div class="k">PCIe traffic (est.)</div><div class="v" id="stPcie">—</div></div>
+          <div class="stat"><div class="k">bottleneck GPU</div><div class="v" id="stBott">—</div></div>
+        </div>
+      </div>
+
+      <div class="panel" id="comparePanel" hidden>
+        <h3>⚖ Mode comparison — same settings, projected from the schedule</h3>
+        <table class="cmp">
+          <thead><tr><th>metric</th><th>-sm layer</th><th>-sm tensor <span class="badge exp" style="font-size:9px">exp</span></th><th>-sm row <span class="badge dep" style="font-size:9px">dep</span></th><th>tensor vs layer</th></tr></thead>
+          <tbody id="cmpBody"></tbody>
+        </table>
+        <div class="cmpnote">Projections use the sliders above. Tensor parallelism is interconnect-hungry: two all-reduces per layer whose messages also grow with batch size — that's why it shines on NVLink-class links and needs <span class="kbd">-fa on</span>. In the real world tensor mode is also less mature than pipeline parallelism (e.g. backend sampling currently falls back to CPU); treat deltas as directional.</div>
+      </div>
+
+      <div class="panel">
+        <h3>Kernel log</h3>
+        <div id="log"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ EXPLAINERS ============ -->
+  <div class="explain">
+    <div class="panel">
+      <h3>■ Layer split — <span class="flag">-sm layer</span> <span class="badge def">default</span></h3>
+      <ul>
+        <li><b>Pipeline parallelism.</b> Each GPU receives a contiguous block of layers, sized by <span class="flag">-ts</span> ratios (e.g. 32 layers, <span class="flag">-ts 3,2,1,1</span> → 13/9/5/5).</li>
+        <li>For every token, the activation flows <b>GPU0 → GPU1 → GPU2 → GPU3</b>; one GPU computes while the others wait.</li>
+        <li>KV-cache stays <b>local</b>: each GPU stores K/V only for its own layers. VRAM use ∝ layers owned — heterogeneous cards are fine.</li>
+        <li>Prompt prefill can <b>pipeline ubatches</b> (micro-batches) across GPUs — that's why the prefill Gantt overlaps when the checkbox is on.</li>
+        <li><span class="good">+</span> minimal interconnect traffic (one small activation hop per boundary) · tolerant of slow links (even RPC/multi-machine) · most mature path.
+        <span class="bad">−</span> single-stream utilization ≈ 1/N; the GPU owning the most layers sets the latency; idle cards during decode.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>▦ Tensor split — <span class="flag">-sm tensor</span> <span class="badge exp">experimental</span></h3>
+      <ul>
+        <li><b>True tensor parallelism</b> via a "meta device" abstraction (backend-agnostic TP work led by JohannesGaessler, merged 2026). Every weight tensor is sharded across all participating GPUs.</li>
+        <li>Per layer, attention heads and FFN neurons are split <b>evenly</b> (<span class="flag">-ts</span> not used — exclude GPUs with <span class="flag">--device</span> instead).</li>
+        <li><b>Two cross-GPU reductions per layer</b> — after the attention output-projection and after the FFN down-projection — implemented as ring all-reduces: every GPU ends each reduction holding the full activation, no re-broadcast step.</li>
+        <li><b>KV cache is sharded too</b> (each GPU keeps its heads' K/V) → balanced memory and more context headroom vs. a single card.</li>
+        <li>Needs <span class="flag">-fa on</span>; <span class="flag">-fit</span> unsupported (set <span class="flag">-c</span> manually); backend sampling currently falls back to CPU; best performance on multiple NVIDIA GPUs (CUDA).</li>
+        <li><span class="good">+</span> all GPUs busy every layer · minimizes token latency · generation scales best.
+        <span class="bad">−</span> interconnect-hungry: reductions per layer, and their messages grow with batch (prefill gains need fast links).</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>▤ Row split — <span class="flag">-sm row</span> <span class="badge dep">deprecated</span></h3>
+      <ul>
+        <li><b>Status per official docs: deprecated — "avoid in new deployments."</b> Superseded by <span class="flag">-sm tensor</span>, "which should be universally superior if it can be used."</li>
+        <li>How it worked: only the <b>dense weights</b> were split, by rows — each matmul produced partial outputs that had to be summed across GPUs (one reduction per matmul, summed on one card, then re-broadcast onward).</li>
+        <li>It was the original multi-GPU approach (2023); layer split replaced it as default in late 2023 because the hand-off cost per token was far lower. It also never worked everywhere — e.g. on Vulkan it silently fell back to layer split.</li>
+        <li>Kept in this demo as the historical ancestor of tensor parallelism — and to <i>feel</i> how reduction frequency dominates multi-GPU decode latency.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3>Which one when — cheat sheet</h3>
+      <ul>
+        <li><b>Model doesn't fit one GPU</b> (the common case): <span class="flag">-sm layer</span> + <span class="flag">-ts</span> matched to VRAM. Done.</li>
+        <li><b>Fastest token generation / lowest latency</b> on NVLinked (or fat-PCIe, fast-interconnect) NVIDIA cards: try <span class="flag">-sm tensor -fa on</span> — expect the best decode speed, experimental rough edges.</li>
+        <li><b>Max serving throughput for many users</b>: layer split + continuous batching pipelines ubatches across GPUs; true TP engines (vLLM, TensorRT-LLM) compete at datacenter scale.</li>
+        <li><b>Old tutorials / scripts with <span class="flag">-sm row</span></b>: they still run, but switch them to <span class="flag">tensor</span> (or drop the flag for the layer default).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footnote">
+    <b>Real-world notes (per llama.cpp docs/multi-gpu.md, 2026).</b> Flags: <span class="flag">-sm / --split-mode none|layer|tensor</span> (plus deprecated <span class="flag">row</span>) · <span class="flag">-ts / --tensor-split a,b,c,d</span> — normalized proportions for layer/row (newer builds also accept sizes like <span class="flag">24G,10G,0,0</span>); tensor shards segments evenly · <span class="flag">-ngl</span> accepts <span class="flag">auto|all|N</span> · <span class="flag">-mg</span> main GPU for <span class="flag">none</span> · <span class="flag">-dev</span>/<span class="flag">--list-devices</span> to pick/exclude devices · <span class="flag">-fa</span> required for tensor · <span class="flag">-fit</span> auto-fit (unsupported with tensor — set <span class="flag">-c</span> yourself). History: row split was the original approach; layer split became the default in late 2023; backend-agnostic tensor parallelism ("meta device") landed experimentally in 2026. Known tensor-mode quirk: <i>"backend sampling not supported with SPLIT_MODE_TENSOR; using CPU"</i> (llama-context.cpp). If a GPU can't hold its layer share in layer mode, llama.cpp shifts layers or spills to CPU — this demo just flags the overflow. Timings are illustrative, not benchmarks.
+    Shortcuts: <span class="kbd">space</span> run/pause · <span class="kbd">s</span> step · <span class="kbd">r</span> reset.
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ================= CORE (pure logic — testable) ================= */
+/*__CORE_BEGIN__*/
+const MODELS={
+  m8 :{label:'8B · Q4_K_M', file:'model-8b-q4_k_m.gguf',  layers:32, d:4096, wGB:4.6, headGB:0.35, tLayer:1.0},
+  m70:{label:'70B · Q4_K_M',file:'model-70b-q4_k_m.gguf', layers:80, d:8192, wGB:40,  headGB:1.8,  tLayer:2.2},
+};
+const GPUS=[
+  {name:'RTX 4090',    vram:24},
+  {name:'RTX 4060 Ti', vram:16},
+  {name:'RTX 3060',    vram:12},
+  {name:'RTX 3060',    vram:12},
+];
+const GC=['#5aa2ff','#3fd68f','#ffb454','#f47bb3'];
+
+// largest-remainder partition of n layers proportional to ts (ts[k]==0 → 0 layers)
+function partition(ts,n){
+  const s=ts.reduce((a,b)=>a+b,0);
+  const c=ts.map(v=>s>0?Math.floor(n*v/s):0);
+  let rem=n-c.reduce((a,b)=>a+b,0);
+  const ord=ts.map((v,i)=>[v,i]).sort((a,b)=>(b[0]-a[0])||(a[1]-b[1]));
+  for(const[,i]of ord){ if(rem<=0)break; if(ts[i]>0){c[i]++;rem--;} }
+  return c;
+}
+function fracs(ts){
+  const act=[0,1,2,3].filter(i=>ts[i]>0);
+  const s=act.reduce((a,i)=>a+ts[i],0)||1;
+  const f={}; act.forEach(i=>f[i]=ts[i]/s);
+  return {act,f,s};
+}
+function kvTotal(model,ctx){ const M=MODELS[model]; return M.layers*2*1024*2*ctx/1e9; } // GB, f16
+
+// ---- layer-split schedule (default): contiguous layer blocks, sequential hand-off ----
+function schedLayer(cfg){
+  const M=MODELS[cfg.model];
+  const parts=partition(cfg.ts,M.layers);
+  const act=[0,1,2,3].filter(g=>parts[g]>0);
+  const ops=[],tokenDone=[];
+  const lo=g=>parts.slice(0,g).reduce((a,b)=>a+b,0);
+  const kb=Math.round(M.d*2/1024);            // activation vector per hop, KB (f16)
+  const headMs=0.2*(M.d/4096);
+  let t=0;
+  ops.push({kind:'embed',gpus:[act[0]],grp:'pf',start:t,end:t+=0.15,txt:'GPU'+act[0]+' ▸ embedding lookup'});
+  const pf=cfg.prompt;
+  const chunks=(cfg.pipeline&&pf>=32)?4:1;    // ubatch pipelining for prefill
+  const pd=g=>parts[g]*cfg.tLayer*0.8;        // per-ubatch prefill compute (batched tokens ~ free)
+  const delta=pd(act[0]);
+  let pfEnd=t;
+  for(let u=0;u<chunks;u++){
+    let s=t+u*delta;
+    for(let idx=0;idx<act.length;idx++){
+      const g=act[idx],a=lo(g),b=a+parts[g]-1,dur=pd(g);
+      ops.push({kind:'compute',gpus:[g],grp:'pf',phase:'prefill',chunk:u,start:s,end:s+dur,lo:a,hi:b,
+        txt:'GPU'+g+' ▸ layers '+a+'–'+b+' · prompt ubatch '+(u+1)+'/'+chunks+' ('+pf+' tok)'});
+      s+=dur;
+      if(idx<act.length-1){
+        const n2=act[idx+1];
+        ops.push({kind:'hop',from:g,to:n2,grp:'pf',start:s,end:s+cfg.tPcie,bytes:kb,
+          txt:'PCIe ▸ activations '+kb+' KB · GPU'+g+' → GPU'+n2});
+        s+=cfg.tPcie;
+      }
+    }
+    pfEnd=Math.max(pfEnd,s);
+  }
+  t=pfEnd;
+  for(let j=0;j<cfg.gen;j++){
+    let s=t;
+    for(let idx=0;idx<act.length;idx++){
+      const g=act[idx],a=lo(g),b=a+parts[g]-1,dur=parts[g]*cfg.tLayer;
+      ops.push({kind:'compute',gpus:[g],grp:'g'+j,phase:'gen',token:j,start:s,end:s+dur,lo:a,hi:b,
+        txt:'GPU'+g+' ▸ layers '+a+'–'+b+' · token '+(j+1)});
+      s+=dur;
+      if(idx<act.length-1){
+        const n2=act[idx+1];
+        ops.push({kind:'hop',from:g,to:n2,grp:'g'+j,start:s,end:s+cfg.tPcie,bytes:kb,
+          txt:'PCIe ▸ activations '+kb+' KB · GPU'+g+' → GPU'+n2});
+        s+=cfg.tPcie;
+      }
+    }
+    const last=act[act.length-1];
+    ops.push({kind:'head',gpus:[last],grp:'g'+j,start:s,end:s+headMs,txt:'GPU'+last+' ▸ output head → logits'});
+    s+=headMs;
+    ops.push({kind:'sample',gpus:[last],grp:'g'+j,token:j,start:s,end:s+0.05,txt:'sample token '+(j+1)+' on GPU'+last});
+    s+=0.05;
+    tokenDone.push(s); t=s;
+  }
+  return {ops,tokenDone,tEnd:t,pfEnd,parts,act,f:null,kb,pcts:null};
+}
+
+// ---- tensor-split schedule (experimental TP): every layer sharded on all GPUs, 2 ring all-reduces/layer ----
+function schedTensor(cfg){
+  const M=MODELS[cfg.model];
+  const act=[0,1,2,3];                        // tensor mode: all GPUs participate, even shards
+  const n=act.length;
+  const f={}; act.forEach(g=>f[g]=1/n);
+  const pcts=act.map(()=>'25').join('/');
+  const ops=[],tokenDone=[];
+  const kb=Math.round(M.d*2/1024);
+  const arMul=phase=>phase==='prefill'?3:1;   // all-reduce messages grow with batch size
+  let t=0;
+  const onePass=(phase,j,pf)=>{
+    const P=phase==='prefill'?'pf':'g'+j;
+    ops.push({kind:'embed',gpus:[act[0]],grp:P+':hdr',start:t,end:t+=0.15,txt:'GPU'+act[0]+' ▸ embedding lookup (sharded table)'});
+    const to=act.filter(g=>g!==act[0]);
+    ops.push({kind:'copy',from:act[0],to,grp:P+':hdr',start:t,end:t+=0.12,bytes:kb,
+      txt:'all-gather hidden state → GPUs ['+to.join(', ')+']'});
+    const durA=0.4*cfg.tLayer*pf/n, durF=0.6*cfg.tLayer*pf/n;
+    for(let i=0;i<M.layers;i++){
+      ops.push({kind:'compute',gpus:act.slice(),grp:P+':L'+i,phase,token:j,layer:i,part:'attn',start:t,end:t+durA,
+        txt:'all GPUs ▸ L'+i+' attention shard in parallel · heads split '+pcts+'%'});
+      t+=durA;
+      const arA=cfg.tReduce*arMul(phase);
+      ops.push({kind:'reduce',gpus:act.slice(),grp:P+':L'+i,phase,token:j,layer:i,part:'attn',allreduce:true,start:t,end:t+arA,bytes:kb,
+        txt:'⇄ ring all-reduce (attn out-proj, L'+i+') · every GPU ends with full activation'});
+      t+=arA;
+      ops.push({kind:'compute',gpus:act.slice(),grp:P+':L'+i,phase,token:j,layer:i,part:'ffn',start:t,end:t+durF,
+        txt:'all GPUs ▸ L'+i+' FFN shard in parallel · neurons split '+pcts+'%'});
+      t+=durF;
+      const arF=cfg.tReduce*arMul(phase);
+      ops.push({kind:'reduce',gpus:act.slice(),grp:P+':L'+i,phase,token:j,layer:i,part:'ffn',allreduce:true,start:t,end:t+arF,bytes:kb,
+        txt:'⇄ ring all-reduce (FFN down-proj, L'+i+')'});
+      t+=arF;
+    }
+    ops.push({kind:'compute',gpus:act.slice(),grp:P+':tail',phase,token:j,layer:'head',part:'head',start:t,end:t+durF,
+      txt:'all GPUs ▸ output head shard → partial logits'});
+    t+=durF;
+    ops.push({kind:'reduce',gpus:act.slice(),grp:P+':tail',phase,token:j,part:'logits',allreduce:true,start:t,end:t+0.2,bytes:kb,
+      txt:'⇄ all-reduce partial logits'});
+    t+=0.2;
+    ops.push({kind:'sample',gpus:[act[0]],grp:P+':tail',token:j,start:t,end:t+=0.05,
+      txt:'sample on GPU'+act[0]+' (tensor mode: backend sampling → CPU)'});
+    return t;
+  };
+  const pfEnd=onePass('prefill',null,0.8);
+  let tEnd=pfEnd;
+  for(let j=0;j<cfg.gen;j++){ const e=onePass('gen',j,1); tokenDone.push(e); tEnd=e; }
+  return {ops,tokenDone,tEnd,pfEnd,parts:null,act,f,kb,pcts};
+}
+
+// ---- row-split schedule (DEPRECATED legacy): dense weights by rows, partial sums per matmul ----
+function schedRow(cfg){
+  const M=MODELS[cfg.model];
+  const {act,f}=fracs(cfg.ts);
+  const ops=[],tokenDone=[];
+  const maxF=Math.max(...act.map(g=>f[g]));
+  const kb=Math.round(M.d*2/1024);
+  const pcts=act.map(g=>Math.round(f[g]*100)).join('/');
+  const headMs=0.2*(M.d/4096);
+  let t=0;
+  const onePass=(phase,j,pfm)=>{
+    const P=phase==='prefill'?'pf':'g'+j;
+    ops.push({kind:'embed',gpus:[act[0]],grp:P+':hdr',start:t,end:t+=0.15,txt:'GPU'+act[0]+' ▸ embedding lookup'});
+    const to=act.filter(g=>g!==act[0]);
+    ops.push({kind:'copy',from:act[0],to,grp:P+':hdr',start:t,end:t+=0.12,bytes:kb,
+      txt:'broadcast activations '+kb+' KB → GPUs ['+to.join(', ')+']'});
+    const durL=cfg.tLayer*maxF*pfm;
+    for(let i=0;i<M.layers;i++){
+      ops.push({kind:'compute',gpus:act.slice(),grp:P+':L'+i,phase,token:j,layer:i,start:t,end:t+durL,
+        txt:'all GPUs ▸ layer '+i+' in parallel · dense-weight rows split '+pcts+'% (legacy)'});
+      t+=durL;
+      ops.push({kind:'reduce',gpus:act.slice(),grp:P+':L'+i,phase,token:j,sink:act[0],layer:i,start:t,end:t+cfg.tReduce,bytes:kb,
+        txt:'Σ partial sums (layer '+i+') → GPU'+act[0]+' · '+(kb/4)+' KB ×'+act.length+' + re-broadcast'});
+      t+=cfg.tReduce;
+    }
+    ops.push({kind:'compute',gpus:act.slice(),grp:P+':tail',phase,token:j,layer:'head',start:t,end:t+durL*0.9,
+      txt:'all GPUs ▸ output head (row-split '+pcts+'%) → partial logits'});
+    t+=durL*0.9;
+    ops.push({kind:'reduce',gpus:act.slice(),grp:P+':tail',phase,token:j,sink:act[0],layer:'logits',start:t,end:t+0.2,bytes:kb,
+      txt:'Σ partial logits → GPU'+act[0]});
+    t+=0.2;
+    ops.push({kind:'sample',gpus:[act[0]],grp:P+':tail',token:j,start:t,end:t+=0.05,txt:'sample on GPU'+act[0]});
+    return t;
+  };
+  const pfEnd=onePass('prefill',null,0.8);
+  for(let j=0;j<cfg.gen;j++){ const e=onePass('gen',j,1); tokenDone.push(e); t=e; }
+  return {ops,tokenDone,tEnd:t,pfEnd,parts:null,act,f,kb,pcts};
+}
+
+function buildSchedule(cfg){
+  let R;
+  if(cfg.mode==='tensor')R=schedTensor(cfg);
+  else if(cfg.mode==='row')R=schedRow(cfg);
+  else R=schedLayer(cfg);
+  // pipelined prefill interleaves chunk windows — keep the log/step cursor chronological
+  R.ops.sort((a,b)=>a.start-b.start||(a.end-b.end));
+  return R;
+}
+
+const BASE_MS=25;      // 1 sim-ms = 25 real-ms at 1× speed (before op-floor warping)
+
+// ---- animation warping ----
+// Tensor/row schedules are dense in very short ops (a sharded compute slice is ~0.1 sim-ms
+// ≈ 2-3 real ms — shorter than a frame), which reads as flicker at any uniform speed.
+// The player therefore advances a *warped* clock in which every op lasts at least
+// FLOOR_OP_MS of real time at 1×, while run.t (sim time), the Gantt, and all stats
+// stay in true simulated time.
+const FLOOR_OP_MS=110;
+
+function buildAnim(R,speed){
+  // full visibility floor at ≤2× (the study zone); release it progressively at higher speeds
+  const effFloor=FLOOR_OP_MS*Math.min(1,2/Math.max(speed||1,0.25));
+  let T=0; const segs=[];
+  for(const o of R.ops){
+    const realDur=Math.max((o.end-o.start)*BASE_MS,effFloor);
+    segs.push({t0:o.start,t1:o.end,T0:T,realDur});
+    T+=realDur;
+  }
+  return {segs,total:T};
+}
+
+function buildStepLabels(R,cfg){
+  const byGrp=new Map();
+  for(const o of R.ops){
+    if(!byGrp.has(o.grp))byGrp.set(o.grp,[]);
+    byGrp.get(o.grp).push(o);
+  }
+  const labels=new Map();
+  const chain=R.parts?R.act.map(g=>{
+    const a=R.parts.slice(0,g).reduce((x,y)=>x+y,0);
+    return 'GPU'+g+'·L'+a+'–'+(a+R.parts[g]-1);
+  }).join(' → '):null;
+  for(const[grp,os]of byGrp){
+    const o0=os[0];
+    const tok=o0.token!=null&&o0.phase==='gen'?' · token '+(o0.token+1):'';
+    let label;
+    if(cfg.mode==='layer'&&grp==='pf'){
+      const chunks=(cfg.pipeline&&cfg.prompt>=32)?4:1;
+      label='prefill '+cfg.prompt+' tok · '+chain+(chunks>1?' · '+chunks+' pipelined ubatches':'');
+    }else if(cfg.mode==='layer'&&o0.phase==='gen'){
+      label='token '+(o0.token+1)+' · '+chain+' → sample';
+    }else if(cfg.mode==='tensor'&&o0.layer!==undefined&&o0.layer!=='head'){
+      label='all GPUs ▸ L'+o0.layer+' tensor-parallel step (attn shard ⇄ AR · ffn shard ⇄ AR)'+tok;
+    }else if(cfg.mode==='row'&&o0.layer!==undefined&&o0.layer!=='head'){
+      label='all GPUs ▸ L'+o0.layer+' legacy row step (compute → Σ partials → re-broadcast)'+tok;
+    }else{
+      label=os.map(o=>o.txt).join('  ›  ');
+    }
+    labels.set(grp,label);
+  }
+  return labels;
+}
+
+function computeMem(cfg){
+  const M=MODELS[cfg.model];
+  const kv=kvTotal(cfg.model,cfg.ctx);
+  const per=GPUS.map(()=>({w:0,kv:0,c:0}));
+  if(cfg.mode==='layer'){
+    const parts=partition(cfg.ts,M.layers);
+    const act=[0,1,2,3].filter(g=>parts[g]>0);
+    const last=act[act.length-1];
+    for(let g=0;g<4;g++){
+      if(parts[g]>0){
+        per[g].w=M.wGB*parts[g]/M.layers;
+        per[g].kv=kv*parts[g]/M.layers;
+        per[g].c=(g===act[0])?0.5:0.25;
+      }
+      if(g===last&&parts[g]>0)per[g].w+=M.headGB;
+    }
+  }else if(cfg.mode==='tensor'){
+    for(let g=0;g<4;g++){
+      per[g].w=(M.wGB+M.headGB)/4;   // every weight tensor sharded evenly
+      per[g].kv=kv/4;                // KV cache sharded by heads
+      per[g].c=0.4;
+    }
+  }else{ // row (legacy)
+    const {act,f}=fracs(cfg.ts);
+    for(let g=0;g<4;g++){
+      const fk=f[g]||0;
+      per[g].w=(M.wGB+M.headGB)*fk+(g===act[0]?0.3:0); // embedding table lives on first active GPU
+      per[g].kv=kv*fk;
+      per[g].c=fk>0?0.3:0;
+    }
+  }
+  return {per,kv};
+}
+
+function computeStats(R,cfg){
+  const busy=GPUS.map(()=>0);
+  R.ops.forEach(o=>{ if(o.kind==='compute'||o.kind==='head') o.gpus.forEach(g=>busy[g]+=o.end-o.start); });
+  const util=busy.map(b=>b/R.tEnd);
+  let pcieKB=0;
+  R.ops.forEach(o=>{
+    if(o.kind==='hop')pcieKB+=o.bytes;
+    else if(o.kind==='copy')pcieKB+=o.bytes*o.to.length;
+    else if(o.kind==='reduce')pcieKB+=o.allreduce?o.bytes*2*(o.gpus.length-1):o.bytes/4*o.gpus.length+o.bytes;
+  });
+  const n=R.tokenDone.length;
+  const perTok=n>1?(R.tokenDone[n-1]-R.tokenDone[0])/(n-1):(R.tEnd-R.pfEnd);
+  return {
+    util,pcieKB,perTok,tEnd:R.tEnd,pfEnd:R.pfEnd,
+    tps:n>1?1000/perTok:0,
+    pfTps:R.pfEnd>0?cfg.prompt/R.pfEnd*1000:0,
+    bottleneck:busy.indexOf(Math.max(...busy)),
+  };
+}
+/*__CORE_END__*/
+
+/* ================= STATE ================= */
+const cfg={
+  mode:'layer', ts:[1,1,1,1], model:'m8', ctx:4096, prompt:64, gen:24,
+  speed:2, pipeline:true, tLayer:1.0, tPcie:0.35, tReduce:0.9,
+};
+const WORDS=['The',' llama',' counts',' its',' layers',',',' four',' GPUs',' humming',' in',' the',' rack','.',' Tokens',' drift',' over',' PCIe',' like',' ferries',' between',' islands',' of',' silicon',',',' each',' one',' carrying',' a',' small',' vector',' of',' meaning',' toward',' the',' next',' matmul','.',' In',' layer',' mode',' the',' baton',' passes',' left',' to',' right',',',' one',' card',' sprinting',' while',' three',' rest','.',' In',' tensor',' mode',' all',' four',' pull',' together',',',' ring',' all',' -',' reduces',' stitching',' the',' answer',' back',' into',' one','.'];
+const run={R:null,st:null,t:0,playing:false,opsSt:[],lastRuns:{},finished:false,
+  anim:null,animT:0,ptr:0,stepLabels:null,logged:new Set()};
+let cardRects=null, dirty=true;
+
+const $=id=>document.getElementById(id);
+
+/* ================= BUILD STATIC DOM ================= */
+function buildTsSliders(){
+  const grid=$('tsGrid'); grid.innerHTML='';
+  for(let g=0;g<4;g++){
+    const d=document.createElement('div'); d.className='tsg';
+    d.innerHTML='<div class="t"><span style="color:'+GC[g]+'">● GPU'+g+' <b id="tsName'+g+'"></b></span><b id="tsVal'+g+'">1</b></div>'+
+      '<input type="range" min="0" max="8" step="1" value="'+cfg.ts[g]+'" id="tsR'+g+'" aria-label="tensor split GPU'+g+'">';
+    grid.appendChild(d);
+    d.querySelector('input').addEventListener('input',e=>{
+      cfg.ts[g]=+e.target.value; refreshConfig(); newRun();
+    });
+  }
+}
+function buildCards(){
+  const box=$('cards'); box.innerHTML='';
+  for(let g=0;g<4;g++){
+    const c=document.createElement('div');
+    c.className='card'; c.id='card'+g; c.style.setProperty('--c',GC[g]);
+    c.innerHTML=
+      '<div class="chead"><span><span class="led"></span><b>GPU '+g+'</b></span><span id="gname'+g+'"></span></div>'+
+      '<div class="vram" id="vram'+g+'"><i class="sw" id="vw'+g+'"></i><i class="kv" id="vk'+g+'"></i><i class="cb" id="vc'+g+'"></i></div>'+
+      '<div class="vtxt"><span id="vuse'+g+'"></span><span id="vcap'+g+'"></span></div>'+
+      '<div class="cap" id="cap'+g+'">idle</div>'+
+      '<div class="prog"><i id="pg'+g+'"></i></div>'+
+      '<div class="util"><span id="ul'+g+'">0%</span><span class="ubar"><i id="uu'+g+'"></i></span><span>util</span></div>'+
+      '<div class="warn" id="warn'+g+'">⚠ OOM</div>'+
+      '<div class="sumbadge">⇄</div>';
+    box.appendChild(c);
+  }
+}
+function computeLayersHeld(){
+  if(cfg.mode!=='layer')return null;
+  const parts=partition(cfg.ts,MODELS[cfg.model].layers);
+  let a=0; return parts.map(p=>{const r=[a,a+p-1];a+=p;return r;});
+}
+function idleCaption(g){
+  if(cfg.mode==='layer'){
+    const h=computeLayersHeld();
+    return h&&h[g][1]>=h[g][0]?'holds L'+h[g][0]+'–'+h[g][1]:'not used (-ts 0)';
+  }
+  if(cfg.mode==='tensor')return 'holds 25% of every layer · KV sharded';
+  return cfg.ts[g]>0?('holds '+Math.round((fracs(cfg.ts).f[g]||0)*100)+'% of every layer (legacy)'):'not used (-ts 0)';
+}
+function refreshConfig(){
+  const M=MODELS[cfg.model];
+  for(let g=0;g<4;g++){
+    const r=$('tsR'+g); if(r)r.value=cfg.ts[g];
+    const sum=cfg.ts.reduce((a,b)=>a+b,0)||1;
+    $('tsVal'+g).textContent=cfg.ts[g]+' → '+Math.round(cfg.ts[g]/sum*100)+'%';
+    $('tsName'+g).textContent=GPUS[g].name;
+  }
+  $('tLayerR').value=cfg.tLayer; $('tLayerVal').textContent=cfg.tLayer.toFixed(2)+' ms';
+  $('tPcieR').value=cfg.tPcie;   $('tPcieVal').textContent=cfg.tPcie.toFixed(2)+' ms';
+  $('tReduceR').value=cfg.tReduce; $('tReduceVal').textContent=cfg.tReduce.toFixed(2)+' ms';
+  $('speedR').value=cfg.speed; $('speedVal').textContent=cfg.speed.toFixed(1)+'×';
+  $('modelSel').value=cfg.model; $('ctxSel').value=String(cfg.ctx);
+  $('promptSel').value=String(cfg.prompt); $('genSel').value=String(cfg.gen);
+  $('pipeChk').checked=cfg.pipeline;
+  // mode UI
+  $('modeLayer').classList.toggle('on',cfg.mode==='layer');
+  $('modeTensor').classList.toggle('on',cfg.mode==='tensor');
+  $('modeRow').classList.toggle('on',cfg.mode==='row');
+  const layerMode=cfg.mode==='layer';
+  $('tPcieR').closest('.row').classList.toggle('dimmed',!layerMode);
+  $('tReduceR').closest('.row').classList.toggle('dimmed',layerMode);
+  $('pipeChk').closest('.row').classList.toggle('dimmed',!layerMode);
+  $('tsGrid').classList.toggle('dimmed',cfg.mode==='tensor');
+  $('tReduceLbl').textContent=cfg.mode==='tensor'?'⇄ all-reduce (×2/layer)':'Σ sync / reduction (row)';
+  $('tsHint').innerHTML=cfg.mode==='tensor'
+    ?'Tensor mode shards every tensor <b>evenly</b> across participating GPUs — <b>-ts is not used</b>. Exclude a card with <b>--device</b> instead. Requires <b>-fa on</b>.'
+    :'Ratios are normalized (3,2,1,1 ⇒ 3/7, 2/7, 1/7, 1/7). A <b>0</b> excludes that GPU. Watch the VRAM bars: exceeding a card\'s capacity is the real-world OOM.';
+  $('modeDesc').textContent=
+    cfg.mode==='layer'?'Pipeline parallelism (default). Each GPU holds contiguous layers; the token travels GPU0→1→2→3, one GPU active at a time.'
+    :cfg.mode==='tensor'?'Tensor parallelism (experimental). Every layer sharded across all 4 GPUs — weights and KV — with 2 ring all-reduces per layer. Minimizes latency; needs a fast interconnect + -fa.'
+    :'DEPRECATED legacy path. Dense weights cut by rows; partial outputs summed once per layer. Superseded by -sm tensor — shown here for comparison.';
+  // stack strip
+  const stack=$('stack'); stack.innerHTML='';
+  const lbls=$('stackLbls'); lbls.innerHTML='';
+  if(cfg.mode==='layer'){
+    const owner=computeLayersHeld();
+    for(let i=0;i<M.layers;i++){
+      const g=owner.findIndex(r=>i>=r[0]&&i<=r[1]&&r[1]>=r[0]);
+      const cell=document.createElement('div'); cell.className='cell';
+      cell.style.background=GC[g]; cell.title='L'+i+' · GPU'+g;
+      if(cfg.ts[g]===0)cell.classList.add('dimcell');
+      stack.appendChild(cell);
+    }
+    owner.forEach((r,g)=>{
+      if(r[1]<r[0])return;
+      const w=(r[1]-r[0]+1)/M.layers*100;
+      const l=document.createElement('div'); l.className='lbl'; l.style.width=w+'%';
+      l.style.borderColor=GC[g]; l.textContent='GPU'+g+' · L'+r[0]+'–'+r[1];
+      lbls.appendChild(l);
+    });
+  }else{
+    let f,pcts;
+    if(cfg.mode==='tensor'){ f=[.25,.25,.25,.25]; pcts='25/25/25/25'; }
+    else{ const fr=fracs(cfg.ts); f=[0,1,2,3].map(g=>fr.f[g]||0); pcts=fr.act.map(g=>Math.round(fr.f[g]*100)+'%').join('/'); }
+    let cum=0,seg=[];
+    for(let g=0;g<4;g++){ if(f[g]<=0)continue; seg.push(GC[g]+' '+(cum*100)+'%',GC[g]+' '+((cum+f[g])*100)+'%'); cum+=f[g]; }
+    for(let i=0;i<M.layers;i++){
+      const cell=document.createElement('div'); cell.className='cell';
+      cell.style.background='linear-gradient(90deg,'+seg.join(',')+')';
+      cell.title='L'+i+' · sharded '+pcts+' across GPUs';
+      stack.appendChild(cell);
+    }
+    const l=document.createElement('div'); l.className='lbl'; l.style.width='100%'; l.style.borderColor='#5b6779';
+    l.textContent=(cfg.mode==='tensor'?'every layer sharded evenly (meta device) · attn heads + FFN neurons · KV sharded · 2 ⇄ all-reduces / layer'
+                                    :'every layer row-split (legacy) ')+f.map((v,g)=>v>0?('GPU'+g+':'+Math.round(v*100)+'%'):null).filter(Boolean).join('  ·  ');
+    lbls.appendChild(l);
+  }
+  // VRAM bars
+  const mem=computeMem(cfg);
+  for(let g=0;g<4;g++){
+    const p=mem.per[g], cap=GPUS[g].vram, used=p.w+p.kv+p.c;
+    const pct=v=>Math.min(100,v/cap*100);
+    $('vw'+g).style.width=pct(p.w)+'%';
+    $('vk'+g).style.width=pct(p.kv)+'%';
+    $('vc'+g).style.width=pct(p.c)+'%';
+    $('vcap'+g).textContent='/ '+cap+' GB';
+    $('vuse'+g).textContent=used.toFixed(1)+' GB (W '+p.w.toFixed(1)+' · KV '+p.kv.toFixed(2)+' · buf '+p.c.toFixed(2)+')';
+    const over=used>cap;
+    $('vram'+g).classList.toggle('over',over);
+    $('card'+g).classList.toggle('over',over);
+    $('gname'+g).textContent=GPUS[g].name;
+  }
+  // CLI
+  let cm,cmd;
+  if(cfg.mode==='tensor'){
+    cm='# weights + KV sharded evenly across 4 GPUs (meta device)\n# -fit not supported with tensor → set -c manually; requires -fa';
+    cmd='llama-server -m '+M.file+' -ngl all -c '+cfg.ctx+' -sm tensor -fa on';
+  }else if(cfg.mode==='row'){
+    cm='# DEPRECATED — superseded by -sm tensor\n# dense weights row-split '+fracs(cfg.ts).act.map(g=>Math.round(fracs(cfg.ts).f[g]*100)+'%').join(' / ');
+    cmd='llama-server -m '+M.file+' -ngl all -c '+cfg.ctx+' -sm row -ts '+cfg.ts.join(',');
+  }else{
+    cm='# '+M.layers+' layers → '+partition(cfg.ts,M.layers).join(' / ')+'  (KV cache stays with its layers)';
+    cmd='llama-server -m '+M.file+' -ngl all -c '+cfg.ctx+' -sm layer -ts '+cfg.ts.join(',');
+  }
+  $('cli').innerHTML='<span class="cm">'+cm+'</span>\n'+cmd;
+  // cards idle captions + util
+  const R=run.R;
+  for(let g=0;g<4;g++){
+    if(!run.playing&&run.t===0)$('cap'+g).textContent=idleCaption(g);
+    $('ul'+g).textContent=R?Math.round(run.st.util[g]*100)+'%':'0%';
+    $('uu'+g).style.width=R?(run.st.util[g]*100)+'%':'0%';
+    $('uu'+g).style.background=GC[g];
+  }
+}
+function buildChips(){
+  const s=$('stream'); s.innerHTML='';
+  const p=document.createElement('span'); p.className='tok prompt'; p.id='tokP';
+  p.textContent='prompt · '+cfg.prompt+' tok'; s.appendChild(p);
+  for(let j=0;j<cfg.gen;j++){
+    const c=document.createElement('span'); c.className='tok gen'; c.id='tok'+j;
+    c.textContent=WORDS[j%WORDS.length];
+    const prev=j===0?run.R.pfEnd:run.R.tokenDone[j-1];
+    c.title='token '+(j+1)+' · Δ '+(run.R.tokenDone[j]-prev).toFixed(2)+' ms';
+    s.appendChild(c);
+  }
+}
+
+/* ================= RUN CONTROL ================= */
+function newRun(autoplay){
+  run.R=buildSchedule(cfg);
+  run.st=computeStats(run.R,cfg);
+  run.anim=buildAnim(run.R,cfg.speed);
+  run.stepLabels=buildStepLabels(run.R,cfg);
+  run.t=0; run.playing=false; run.finished=false;
+  run.animT=0; run.ptr=0; run.logged=new Set();
+  run.opsSt=new Array(run.R.ops.length).fill(0);
+  run.R.ops.forEach(o=>{o._pk=null;});
+  buildChips();
+  $('log').innerHTML='';
+  $('scrub').max=run.R.tEnd; $('scrub').value=0;
+  $('bannerTx').textContent='ready — press ▶ Run inference (or Space)';
+  $('banner').classList.remove('live');
+  $('comparePanel').hidden=true;
+  measureRects(); refreshConfig(); sync(true); dirty=true;
+  if(autoplay)start();
+}
+function start(){
+  if(!run.R)newRun();
+  if(run.t>=run.R.tEnd){
+    run.t=0; run.animT=0; run.ptr=0;
+    run.opsSt.fill(0); run.logged=new Set();
+    run.R.ops.forEach(o=>killPackets(o));
+  }
+  run.playing=true; run.finished=false;
+  $('banner').classList.add('live');
+}
+function pause(){ run.playing=false; $('banner').classList.remove('live'); }
+// after run.t was set directly (scrub / step), re-derive the warped clock position
+function animSeek(){
+  const A=run.anim; if(!A)return;
+  let lo=0,hi=A.segs.length-1,i=0;
+  while(lo<=hi){const mid=(lo+hi)>>1;if(A.segs[mid].t0<=run.t+1e-9){i=mid;lo=mid+1;}else hi=mid-1;}
+  run.ptr=i;
+  const seg=A.segs[i];
+  const p=seg.t1>seg.t0?Math.min(1,Math.max(0,(run.t-seg.t0)/(seg.t1-seg.t0))):1;
+  run.animT=seg.T0+p*seg.realDur;
+}
+
+/* ================= ANIMATION SYNC ================= */
+function applyOp(o,st){
+  if(st===1){
+    if(o.grp!=null){
+      if(!run.logged.has(o.grp)){run.logged.add(o.grp);logLine(run.stepLabels.get(o.grp)||o.txt,o.start);}
+    }else logLine(o.txt,o.start);
+    if(o.kind==='hop'||o.kind==='copy'||o.kind==='reduce')spawnPackets(o);
+  }else if(st===0||st===2){
+    killPackets(o);
+  }
+}
+function measureRects(){
+  const ov=$('ov');
+  // packet lane: centered in the padding strip above the cards
+  cardRects=[0,1,2,3].map(g=>{
+    const el=$('card'+g);
+    const r=el.getBoundingClientRect(), base=ov.getBoundingClientRect();
+    return {x:r.left-base.left+r.width/2, y:r.top-base.top-28};
+  });
+}
+function spawnPackets(o){
+  const ov=$('ov'); o._pk=[];
+  const mk=(a,b,dy,label,col)=>{
+    const el=document.createElement('div'); el.className='pk';
+    el.textContent=label; el.style.borderColor=col;
+    ov.appendChild(el);
+    o._pk.push({el,a,b,dy});
+  };
+  if(o.kind==='hop') mk(o.from,o.to,-6,o.bytes+' KB',GC[o.from]);
+  else if(o.kind==='copy') o.to.forEach((g,i)=>mk(o.from,g,(i-(o.to.length-1)/2)*20,o.bytes+' KB',GC[o.from]));
+  else if(o.kind==='reduce'){
+    if(o.allreduce){
+      // ring all-reduce: every GPU sends its chunk to the next GPU in the ring
+      o.gpus.forEach((g,i)=>mk(g,(g+1)%4,(i-1.5)*16,'1/4 ⇄ ring',GC[g]));
+    }else{
+      o.gpus.filter(g=>g!==o.sink).forEach((g,i,arr)=>mk(g,o.sink,(i-(arr.length-1)/2)*18,(o.bytes/4)+' KB ▸ Σ',GC[g]));
+    }
+  }
+}
+function killPackets(o){ if(o._pk){o._pk.forEach(p=>p.el.remove());o._pk=null;} }
+function ease(p){return p*p*(3-2*p);}
+function updatePackets(){
+  if(!run.R)return;
+  const ops=run.R.ops;
+  for(let i=0;i<ops.length;i++){
+    const o=ops[i];
+    if(o._pk&&run.opsSt[i]===1){
+      const p=ease(Math.min(1,Math.max(0,(run.t-o.start)/(o.end-o.start))));
+      const op=Math.min(1,p/0.1,(1-p)/0.1,1);
+      for(const pk of o._pk){
+        const A=cardRects[pk.a],B=cardRects[pk.b];
+        const x=A.x+(B.x-A.x)*p, y=A.y+(B.y-A.y)*p+pk.dy;
+        pk.el.style.transform='translate('+x+'px,'+y+'px) translate(-50%,-50%)';
+        pk.el.style.opacity=op;
+      }
+    }
+  }
+}
+function captionFor(o,g){
+  if(o.kind==='compute'){
+    if(o.part==='attn')return 'L'+o.layer+' attn · 25% heads /Q·K·V·O';
+    if(o.part==='ffn') return 'L'+o.layer+' ffn · 25% neurons';
+    if(o.layer==='head'&&o.part==='head')return 'output head shard → partial logits';
+    if(o.layer==='head')return 'output head → logits';
+    const what=o.phase==='gen'?('token '+(o.token+1)):('prompt · ub'+(o.chunk+1));
+    return 'L'+o.lo+'–'+o.hi+' · '+what;
+  }
+  if(o.kind==='head')return 'output head → logits';
+  if(o.kind==='hop')return g===o.from?('→ GPU'+o.to+' · PCIe hop'):('← activations');
+  if(o.kind==='reduce')return o.allreduce?(o.part==='attn'?'⇄ AR (attn out)':'⇄ AR (ffn down)'):('Σ partials → GPU'+o.sink);
+  if(o.kind==='embed')return 'embedding lookup';
+  if(o.kind==='copy')return 'broadcast → GPUs';
+  return '';
+}
+function sync(force){
+  if(!run.R)return;
+  const t=run.t, ops=run.R.ops;
+  const actBy=[null,null,null,null];
+  let sumSink=-1,sumAll=false,latest=null;
+  for(let i=0;i<ops.length;i++){
+    const o=ops[i];
+    const st=t>=o.end?2:(t>=o.start?1:0);
+    if(st!==run.opsSt[i]||force){applyOp(o,st);run.opsSt[i]=st;}
+    if(st===1){
+      if(!latest||o.start>=latest.start)latest=o;
+      if(o.kind==='compute'||o.kind==='head'||o.kind==='embed')o.gpus.forEach(g=>{if(!actBy[g])actBy[g]=o;});
+      if(o.kind==='hop'){
+        if(!actBy[o.from])actBy[o.from]={kind:'hop',from:o.from,to:o.to,start:o.start,end:o.end};
+        if(!actBy[o.to])actBy[o.to]={kind:'hop',from:o.from,to:o.to,start:o.start,end:o.end};
+      }
+      if(o.kind==='copy'){
+        if(!actBy[o.from])actBy[o.from]={kind:'copy',start:o.start,end:o.end};
+        o.to.forEach(g=>{if(!actBy[g])actBy[g]={kind:'copy',start:o.start,end:o.end};});
+      }
+      if(o.kind==='reduce'){
+        if(o.allreduce)sumAll=true; else if(sumSink<0)sumSink=o.sink;
+        o.gpus.forEach(g=>{if(!actBy[g])actBy[g]=o;});
+      }
+    }
+  }
+  for(let g=0;g<4;g++){
+    const o=actBy[g], cap=$('cap'+g), card=$('card'+g);
+    if(o){
+      card.classList.add('on');
+      cap.textContent=captionFor(o,g);
+      $('pg'+g).style.width=Math.min(100,(t-o.start)/(o.end-o.start)*100)+'%';
+    }else{
+      card.classList.remove('on');
+      $('pg'+g).style.width='0%';
+      if(t>=run.R.tEnd)cap.textContent='done ✓';
+      else if(t===0)cap.textContent=idleCaption(g);
+      else cap.textContent='· waiting ·';
+    }
+    $('card'+g).classList.toggle('off',cfg.mode!=='tensor'&&cfg.ts[g]===0);
+  }
+  for(let g=0;g<4;g++)$('card'+g).classList.toggle('sum',sumAll||g===sumSink);
+  if(latest)$('bannerTx').textContent='t='+t.toFixed(1)+' ms · '+latest.txt;
+  // stream
+  const p=$('tokP'); if(p)p.classList.toggle('done',t>=run.R.pfEnd);
+  let latestTok=-1;
+  for(let j=0;j<cfg.gen;j++){
+    const el=$('tok'+j); if(!el)break;
+    const done=t>=run.R.tokenDone[j];
+    el.classList.toggle('done',done);
+    if(done)latestTok=j;
+  }
+  for(let j=0;j<cfg.gen;j++){const el=$('tok'+j);if(el)el.classList.toggle('latest',j===latestTok);}
+  $('scrub').value=t;
+  updatePackets(); drawGantt(); dirty=false;
+}
+
+/* ================= GANTT ================= */
+function niceStep(span){
+  const cand=[0.05,0.1,0.2,0.5,1,2,5,10,20,50,100,200,500,1000];
+  for(const c of cand)if(span/c<=10)return c;
+  return 2000;
+}
+let gctx=null,gw=0,gh=0,dpr=1;
+function resizeCanvas(){
+  const cv=$('gantt'); dpr=window.devicePixelRatio||1;
+  gw=cv.clientWidth; gh=cv.clientHeight;
+  cv.width=gw*dpr; cv.height=gh*dpr;
+  gctx=cv.getContext('2d'); gctx.setTransform(dpr,0,0,dpr,0,0);
+  dirty=true;
+}
+function drawGantt(){
+  if(!gctx||!run.R)return;
+  const R=run.R, padL=52, padR=12, padT=16, rowH=(gh-padT-14)/4;
+  gctx.clearRect(0,0,gw,gh);
+  const span=Math.max(0.001,R.tEnd);
+  const ppm=(gw-padL-padR)/span;
+  gctx.font='10px ui-monospace,monospace';
+  const step=niceStep(span);
+  gctx.fillStyle='#5b6779';
+  for(let s=0;s<=span+1e-9;s+=step){
+    const x=padL+s*ppm;
+    gctx.strokeStyle='#161d29'; gctx.beginPath(); gctx.moveTo(x,padT-6); gctx.lineTo(x,gh-14); gctx.stroke();
+    gctx.fillText(s>=1?s.toFixed(0):s.toFixed(2)+'ms',x+2,gh-3);
+  }
+  for(let g=0;g<4;g++){
+    const y=padT+g*rowH;
+    gctx.fillStyle='#121a26'; gctx.fillRect(padL,y,gw-padL-padR,rowH-6);
+    gctx.fillStyle=GC[g];
+    gctx.fillText('GPU'+g,8,y+rowH/2);
+    gctx.fillStyle='#39465c';
+    gctx.fillText(GPUS[g].vram+'GB',8,y+rowH/2+11);
+  }
+  for(const o of R.ops){
+    const x0=padL+o.start*ppm, w=Math.max(1.2,(o.end-o.start)*ppm);
+    const rows=o.kind==='hop'?[o.from]:o.gpus;
+    for(const g of rows){
+      const y=padT+g*rowH;
+      if(o.kind==='compute'){
+        gctx.fillStyle=GC[g]; gctx.globalAlpha=0.9;
+        gctx.fillRect(x0,y+2,w,rowH-10);
+      }else if(o.kind==='head'||o.kind==='sample'){
+        gctx.fillStyle='#b48cff'; gctx.globalAlpha=0.9;
+        gctx.fillRect(x0,y+4,w,Math.max(2,rowH-16));
+      }else if(o.kind==='hop'){
+        gctx.fillStyle='#8b93a7'; gctx.globalAlpha=0.85;
+        gctx.fillRect(x0,y+rowH/2-3,w,4);
+      }else if(o.kind==='reduce'){
+        gctx.fillStyle='#e9eef8'; gctx.globalAlpha=0.85;
+        gctx.fillRect(x0,y+5,w,rowH-14);
+      }else if(o.kind==='embed'||o.kind==='copy'){
+        gctx.fillStyle='#6ea8fe'; gctx.globalAlpha=0.7;
+        gctx.fillRect(x0,y+5,w,rowH-14);
+      }
+      gctx.globalAlpha=1;
+    }
+  }
+  const cx=padL+Math.min(run.t,span)*ppm;
+  gctx.strokeStyle='#ff6b6b'; gctx.lineWidth=1.5;
+  gctx.beginPath(); gctx.moveTo(cx,padT-8); gctx.lineTo(cx,gh-14); gctx.stroke(); gctx.lineWidth=1;
+}
+
+/* ================= LOG & STATS ================= */
+function logLine(txt,t0){
+  const el=$('log');
+  const d=document.createElement('div');
+  d.innerHTML='<span class="t">['+(t0!=null?t0:run.t).toFixed(1).padStart(8)+'ms]</span> '+txt;
+  el.appendChild(d);
+  while(el.childNodes.length>500)el.removeChild(el.firstChild);
+  el.scrollTop=el.scrollHeight;
+}
+function updateStats(){
+  const R=run.R,S=run.st;
+  if(!R)return;
+  const done=Math.min(run.t,R.tEnd);
+  const toksDone=R.tokenDone.filter(x=>x<=run.t).length;
+  $('stProg').firstElementChild.nextElementSibling.innerHTML=
+    (run.t>=R.tEnd?'finished':(done/R.tEnd*100).toFixed(0)+'%')+' <small>· t='+done.toFixed(1)+' ms / '+R.tEnd.toFixed(1)+' ms · tokens '+toksDone+'/'+cfg.gen+'</small>';
+  $('stLat').innerHTML=S.perTok.toFixed(2)+' <small>ms/tok</small>';
+  $('stTps').innerHTML=S.tps.toFixed(1)+' <small>tok/s</small>';
+  $('stPf').innerHTML=S.pfTps.toFixed(0)+' <small>tok/s</small>';
+  $('stPcie').innerHTML=(S.pcieKB/1024).toFixed(1)+' <small>MB</small>';
+  let bott;
+  if(cfg.mode==='tensor')bott='<span style="color:#e9eef8">⇄ even shards</span> <small>25% ×4</small>';
+  else{
+    const b=S.bottleneck;
+    bott='<span style="color:'+GC[b]+'">● GPU'+b+'</span> <small>'+
+      (cfg.mode==='layer'?('owns '+partition(cfg.ts,MODELS[cfg.model].layers)[b]+' layers'):('slice '+Math.round((R.f[b]||0)*100)+'%'))+'</small>';
+  }
+  $('stBott').innerHTML=bott;
+  $('stLive').textContent='— live cursor vs projected totals';
+}
+
+/* ================= COMPARE ================= */
+function projStats(mode){
+  const key=mode+'|'+cfg.ts.join(',')+'|'+cfg.model+'|'+cfg.ctx+'|'+cfg.prompt+'|'+cfg.gen+'|'+cfg.tLayer+'|'+cfg.tPcie+'|'+cfg.tReduce+'|'+(cfg.pipeline?1:0);
+  if(run.lastRuns[key])return run.lastRuns[key];
+  const R=buildSchedule(Object.assign({},cfg,{mode}));
+  const st=computeStats(R,Object.assign({},cfg,{mode}));
+  run.lastRuns[key]=st;
+  return st;
+}
+function deltaCell(a,b,inv){
+  if(!isFinite(a)||!isFinite(b)||a===0)return '<span class="eq">—</span>';
+  const d=(b-a)/a*100;
+  const cls=Math.abs(d)<1?'eq':((d<0)===!inv?'better':'worse');
+  return '<span class="'+cls+'">'+(d>=0?'+':'')+d.toFixed(0)+'%</span>';
+}
+function showCompare(){
+  const L=projStats('layer'),T=projStats('tensor'),Rw=projStats('row');
+  const u=s=>s.util.map(x=>Math.round(x*100)+'%').join(' / ');
+  $('cmpBody').innerHTML=
+    '<tr><td>per-token latency</td><td>'+L.perTok.toFixed(2)+' ms</td><td>'+T.perTok.toFixed(2)+' ms</td><td>'+Rw.perTok.toFixed(2)+' ms</td><td>'+deltaCell(L.perTok,T.perTok)+'</td></tr>'+
+    '<tr><td>generation throughput</td><td>'+L.tps.toFixed(1)+' tok/s</td><td>'+T.tps.toFixed(1)+' tok/s</td><td>'+Rw.tps.toFixed(1)+' tok/s</td><td>'+deltaCell(L.tps,T.tps)+'</td></tr>'+
+    '<tr><td>prompt processing</td><td>'+L.pfTps.toFixed(0)+' tok/s</td><td>'+T.pfTps.toFixed(0)+' tok/s</td><td>'+Rw.pfTps.toFixed(0)+' tok/s</td><td>'+deltaCell(L.pfTps,T.pfTps)+'</td></tr>'+
+    '<tr><td>PCIe traffic (est.)</td><td>'+(L.pcieKB/1024).toFixed(1)+' MB</td><td>'+(T.pcieKB/1024).toFixed(1)+' MB</td><td>'+(Rw.pcieKB/1024).toFixed(1)+' MB</td><td>'+deltaCell(L.pcieKB,T.pcieKB,true)+'</td></tr>'+
+    '<tr><td>total makespan</td><td>'+L.tEnd.toFixed(1)+' ms</td><td>'+T.tEnd.toFixed(1)+' ms</td><td>'+Rw.tEnd.toFixed(1)+' ms</td><td>'+deltaCell(L.tEnd,T.tEnd)+'</td></tr>'+
+    '<tr><td>GPU utilization</td><td>'+u(L)+'</td><td>'+u(T)+'</td><td>'+u(Rw)+'</td><td class="eq">—</td></tr>';
+  $('comparePanel').hidden=false;
+  $('comparePanel').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+/* ================= LOOP ================= */
+let lastTs=0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min(100,ts-lastTs); lastTs=ts;
+  if(run.playing&&run.R&&run.anim){
+    run.animT+=dt*cfg.speed;               // warped clock: real-ms × speed
+    const A=run.anim;
+    if(run.animT>=A.total){
+      run.animT=A.total; run.t=run.R.tEnd; run.playing=false; run.finished=true;
+      $('banner').classList.remove('live');
+      $('bannerTx').textContent='done ✓ — '+cfg.gen+' tokens in '+run.R.tEnd.toFixed(1)+' ms (sim) · '+run.st.tps.toFixed(1)+' tok/s';
+    }else{
+      while(run.ptr<A.segs.length-1&&run.animT>=A.segs[run.ptr+1].T0)run.ptr++;
+      while(run.ptr>0&&run.animT<A.segs[run.ptr].T0)run.ptr--;
+      const seg=A.segs[run.ptr];
+      const p=Math.min(1,Math.max(0,(run.animT-seg.T0)/seg.realDur));
+      run.t=seg.t0+p*(seg.t1-seg.t0);      // sim time for Gantt/banner/stats
+    }
+    sync(); updateStats();
+  }else if(dirty&&run.R){
+    sync(); updateStats();
+  }
+}
+
+/* ================= WIRING ================= */
+function wire(){
+  buildTsSliders(); buildCards();
+  $('modeLayer').onclick=()=>{cfg.mode='layer';refreshConfig();newRun(true);};
+  $('modeTensor').onclick=()=>{cfg.mode='tensor';refreshConfig();newRun(true);};
+  $('modeRow').onclick=()=>{cfg.mode='row';refreshConfig();newRun(true);};
+  $('btnRun').onclick=()=>start();
+  $('btnPause').onclick=()=>pause();
+  $('btnStep').onclick=()=>{
+    pause();
+    if(!run.R)return;
+    let next=Infinity;
+    for(const o of run.R.ops){
+      const st=run.t>=o.end?2:(run.t>=o.start?1:0);
+      if(st===0)next=Math.min(next,o.start);
+      else if(st===1)next=Math.min(next,o.end);
+    }
+    if(isFinite(next)){run.t=next;animSeek();sync(true);updateStats();}
+  };
+  $('btnReset').onclick=()=>newRun(false);
+  $('btnCompare').onclick=()=>showCompare();
+  $('btnCopy').onclick=()=>{
+    const txt=$('cli').textContent.split('\n').filter(l=>!l.startsWith('#')).join('\n');
+    (navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).catch(()=>{}).finally(()=>{
+      $('btnCopy').textContent='✓ copied'; setTimeout(()=>$('btnCopy').textContent='⧉ Copy',1200);
+    });
+  };
+  $('modelSel').onchange=e=>{cfg.model=e.target.value;cfg.tLayer=MODELS[cfg.model].tLayer;refreshConfig();newRun(true);};
+  $('ctxSel').onchange=e=>{cfg.ctx=+e.target.value;refreshConfig();newRun(true);};
+  $('promptSel').onchange=e=>{cfg.prompt=+e.target.value;refreshConfig();newRun(true);};
+  $('genSel').onchange=e=>{cfg.gen=+e.target.value;refreshConfig();newRun(true);};
+  $('pipeChk').onchange=e=>{cfg.pipeline=e.target.checked;newRun(true);};
+  $('speedR').oninput=e=>{
+    cfg.speed=+e.target.value;$('speedVal').textContent=cfg.speed.toFixed(1)+'×';
+    run.anim=buildAnim(run.R,cfg.speed);animSeek();dirty=true;
+  };
+  $('tLayerR').oninput=e=>{cfg.tLayer=+e.target.value;$('tLayerVal').textContent=cfg.tLayer.toFixed(2)+' ms';newRun(false);};
+  $('tPcieR').oninput=e=>{cfg.tPcie=+e.target.value;$('tPcieVal').textContent=cfg.tPcie.toFixed(2)+' ms';newRun(false);};
+  $('tReduceR').oninput=e=>{cfg.tReduce=+e.target.value;$('tReduceVal').textContent=cfg.tReduce.toFixed(2)+' ms';newRun(false);};
+  $('scrub').oninput=e=>{pause();run.t=+e.target.value;animSeek();sync(true);updateStats();};
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
+    cfg.ts=c.dataset.ts.split(',').map(Number); refreshConfig(); newRun(true);
+  });
+  window.addEventListener('resize',()=>{measureRects();resizeCanvas();dirty=true;});
+  window.addEventListener('keydown',e=>{
+    if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+    if(e.code==='Space'){e.preventDefault();run.playing?pause():start();}
+    else if(e.key==='s')$('btnStep').click();
+    else if(e.key==='r')$('btnReset').click();
+  });
+  resizeCanvas();
+  newRun(false);
+  setTimeout(()=>start(),600);
+}
+document.addEventListener('DOMContentLoaded',wire);
+requestAnimationFrame(t=>{lastTs=t;requestAnimationFrame(loop);});
+</script>
+<noscript>This demo needs JavaScript.</noscript>
+</body>
+</html>
